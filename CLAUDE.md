@@ -12,7 +12,8 @@ Self-hosted YouTube/Twitch clipping: import URL → whisper.cpp transcript → m
   - `internal/llm` Claude clip suggestions (structured outputs, server-side fallbacks, word-boundary snapping)
   - `internal/postiz` Public API client; `internal/tasks` job handlers; `internal/store` SQL; `migrations/` goose (embedded)
 - `web/` Next.js 15 App Router client UI; `/api/*` is same-origin (Caddy in prod, rewrite in dev)
-- `deploy/` compose, Caddyfile, `.env.example`, `download-models.sh`; `docs/DEPLOY-ORACLE.md`
+- `deploy/portainer-stack.yml` (prod: existing Postgres/Redis via external network, GHCR images, CloudPanel nginx in front) and `deploy/docker-compose.yml` (self-contained); docs in `docs/DEPLOY-PORTAINER.md`, `docs/DEPLOY-ORACLE.md`
+- `.github/workflows/images.yml` builds linux/arm64 images → `ghcr.io/malinanu/clipforge-{backend,web}`
 
 ## Conventions
 - Times are integer milliseconds everywhere (DB, API, transcript words `{s,e,t}`).
@@ -21,6 +22,7 @@ Self-hosted YouTube/Twitch clipping: import URL → whisper.cpp transcript → m
 - Caption preview (`web/components/CaptionPreview.tsx#groupWords`) must mirror `captions.Group` in Go.
 - Permanent job errors return `asynq.SkipRetry`; set user-visible status only on last attempt or permanent failure.
 - Mutating API calls need header `X-Requested-With: clipforge`.
+- Migrations must run as a non-superuser on PG 13+ (no `CREATE EXTENSION`).
 
 ## Commands
 - `cd api && go test ./...` (render integration test runs if ffmpeg is installed)

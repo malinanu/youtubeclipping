@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- Requires PostgreSQL 13+ (gen_random_uuid is built in; no superuser-only extensions).
 
 CREATE TABLE videos (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),

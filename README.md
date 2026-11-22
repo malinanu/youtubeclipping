@@ -2,7 +2,9 @@
 
 ClipForge is a self-hosted clipping studio for **YouTube and Twitch**. You paste a URL, it transcribes the video locally with whisper.cpp, and you pick moments by hand or let Claude suggest highlights. You can fix caption text, then render 9:16, 1:1 or 16:9 clips with burned-in animated captions plus an SRT file. Finished clips can be pushed to **Postiz** for scheduling.
 
-It runs as one Docker Compose stack on an Oracle Cloud Ampere (arm64) VM. See [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md).
+It runs on an Oracle Cloud Ampere (arm64) VM, deployed in one of two ways:
+- **Portainer + CloudPanel, reusing existing Postgres/Redis containers** with prebuilt GHCR images. See [docs/DEPLOY-PORTAINER.md](docs/DEPLOY-PORTAINER.md).
+- **Standalone Docker Compose**, which bundles Postgres, Redis and Caddy. See [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md).
 
 ## How it works
 
@@ -20,7 +22,8 @@ It runs as one Docker Compose stack on an Oracle Cloud Ampere (arm64) VM. See [d
 - **api/**: Go 1.26, Gin, pgx (PostgreSQL 17), asynq (Redis) job queues, goose migrations, Anthropic Go SDK
   - `cmd/api` is the REST + SSE server. `cmd/worker` runs the background jobs (separate queues for ingest, transcribe, render and default). `cmd/hashpw` generates the admin password hash.
 - **web/**: Next.js 15 (App Router), React 19, Tailwind 4
-- **deploy/**: docker-compose (postgres, redis, api, worker, web, caddy, bgutil PO-token sidecar), Caddyfile, model downloader
+- **deploy/**: `portainer-stack.yml` (uses existing DBs and GHCR images), `docker-compose.yml` (self-contained: postgres, redis, caddy), Caddyfile, model downloader
+- **.github/workflows/images.yml**: tests, then builds linux/arm64 images and pushes them to GHCR
 
 ## Local development
 

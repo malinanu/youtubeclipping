@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"runtime"
@@ -70,7 +71,7 @@ func Load() (*Config, error) {
 		FontsDir: env("FONTS_DIR", ""), // empty = libass uses fontconfig (system + ~/.fonts)
 
 		AdminEmail:        strings.ToLower(env("ADMIN_EMAIL", "")),
-		AdminPasswordHash: env("ADMIN_PASSWORD_HASH", ""),
+		AdminPasswordHash: decodeHash(env("ADMIN_PASSWORD_HASH", "")),
 		SessionSecret:     []byte(env("SESSION_SECRET", "")),
 		SessionTTL:        time.Duration(envInt("SESSION_TTL_HOURS", 24*14)) * time.Hour,
 		CookieSecure:      envBool("COOKIE_SECURE", true),
@@ -114,6 +115,20 @@ func (c *Config) ValidateAPI() error {
 		return fmt.Errorf("SESSION_SECRET must be at least 32 bytes")
 	}
 	return nil
+}
+
+// decodeHash accepts a raw bcrypt hash ("$2a$...") or its base64 encoding.
+// The base64 form contains no "$", so it survives env files, Portainer stack
+// variables and shells without quoting.
+func decodeHash(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasPrefix(v, "$2") {
+		return v
+	}
+	if b, err := base64.StdEncoding.DecodeString(v); err == nil && strings.HasPrefix(string(b), "$2") {
+		return string(b)
+	}
+	return v
 }
 
 func env(k, def string) string {

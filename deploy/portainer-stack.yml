@@ -1,0 +1,83 @@
+# ClipForge stack for Portainer (Stacks → Add stack → Repository, compose path: deploy/portainer-stack.yml).
+#
+# Uses your EXISTING Postgres and Redis containers (joined via the external network ${DB_NETWORK})
+# and prebuilt arm64 images from GHCR. CloudPanel's nginx is the public entry point:
+#   /api/* → 127.0.0.1:${API_PORT}   everything else → 127.0.0.1:${WEB_PORT}
+# See docs/DEPLOY-PORTAINER.md for the variables to set in Portainer.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "20m", max-file: "5" }
+
+x-backend: &backend
+  image: ghcr.io/malinanu/clipforge-backend:${CLIPFORGE_TAG:-latest}
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR (e.g. redis:6379)}
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    REDIS_DB: ${REDIS_DB:-5}
+    ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL}
+    ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH}
+    SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+    COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5-5}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    GROQ_API_KEY: ${GROQ_API_KEY:-}
+    POSTIZ_API_URL: ${POSTIZ_API_URL:-}
+    POSTIZ_API_KEY: ${POSTIZ_API_KEY:-}
+    WHISPER_THREADS: ${WHISPER_THREADS:-4}
+    FFMPEG_THREADS: ${FFMPEG_THREADS:-4}
+    RENDER_CONCURRENCY: ${RENDER_CONCURRENCY:-1}
+    TRANSCRIBE_CONCURRENCY: ${TRANSCRIBE_CONCURRENCY:-1}
+    INGEST_CONCURRENCY: ${INGEST_CONCURRENCY:-2}
+    PROXY_HEIGHT: ${PROXY_HEIGHT:-360}
+    MEDIA_RETENTION_DAYS: ${MEDIA_RETENTION_DAYS:-14}
+    YTDLP_PROXY: ${YTDLP_PROXY:-}
+    YTDLP_EXTRA_ARGS: ${YTDLP_EXTRA_ARGS:-}
+    YTDLP_POT_URL: http://bgutil:4416
+  volumes:
+    - media:/data
+    - ${MODELS_DIR:-/opt/clipforge/models}:/models:ro
+  networks: [default, shared]
+  logging: *logging
+
+services:
+  api:
+    <<: *backend
+    command: ["api"]
+    ports:
+      - "127.0.0.1:${API_PORT:-18080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 15s
+      retries: 10
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    stop_grace_period: 30s
+
+  web:
+    image: ghcr.io/malinanu/clipforge-web:${CLIPFORGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-13000}:3000"
+    depends_on: [api]
+    logging: *logging
+
+  # Generates YouTube PO tokens so yt-dlp looks less like a bot from datacenter IPs.
+  bgutil:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    init: true
+    logging: *logging
+
+networks:
+  shared:
+    external: true
+    name: ${DB_NETWORK:?set DB_NETWORK to the network your postgres/redis containers are on}
+
+volumes:
+  media:

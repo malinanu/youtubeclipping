@@ -1,10 +1,12 @@
-// hashpw prints a bcrypt hash for ADMIN_PASSWORD_HASH.
+// hashpw prints a value for ADMIN_PASSWORD_HASH: the bcrypt hash, base64-encoded
+// so it contains no "$" and can be pasted into .env files or Portainer as-is.
 //
-//	docker compose run --rm api hashpw 'my-password'
+//	docker run --rm ghcr.io/malinanu/clipforge-backend hashpw 'my-password'
 package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -30,5 +32,5 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	fmt.Println(string(h))
+	fmt.Println(base64.StdEncoding.EncodeToString(h))
 }

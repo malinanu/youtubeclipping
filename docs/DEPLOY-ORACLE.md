@@ -1,5 +1,8 @@
 # Deploying ClipForge on Oracle Cloud
 
+> Already running Portainer with your own Postgres/Redis containers and CloudPanel? Use
+> [DEPLOY-PORTAINER.md](DEPLOY-PORTAINER.md) instead. This guide is the self-contained Compose setup.
+
 Target: an **Ampere A1** VM (arm64) on Ubuntu 22.04/24.04, for example the Always Free 4 OCPU / 24 GB shape. Docker runs the stack. CloudPanel (or a Cloudflare Tunnel) terminates TLS in front of it.
 
 ```
@@ -42,7 +45,7 @@ nano .env   # set ADMIN_EMAIL, ANTHROPIC_API_KEY, POSTIZ_* (optional)
 ```bash
 docker compose build                    # first build compiles whisper.cpp natively for the Ampere CPU (~5-10 min)
 docker compose run --rm --no-deps api hashpw 'a-long-unique-password'
-# paste the output into .env as  ADMIN_PASSWORD_HASH='$2a$12$...'   (keep the single quotes)
+# paste the output into .env as  ADMIN_PASSWORD_HASH=<output>   (base64, no quoting needed)
 
 ./download-models.sh small              # ~470 MB. Add medium or large-v3-turbo if you want higher accuracy.
 docker compose up -d

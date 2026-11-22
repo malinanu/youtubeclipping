@@ -11,12 +11,15 @@ FROM denoland/deno:bin-${DENO_VERSION} AS deno
 FROM ubuntu:24.04 AS whisper
 ARG WHISPER_VERSION
 ARG WHISPER_NATIVE=ON
+# Portable CI builds: WHISPER_NATIVE=OFF + an explicit target, e.g. armv8.2-a+dotprod+fp16 (Ampere Altra).
+ARG WHISPER_ARM_ARCH=""
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN git clone --depth 1 --branch ${WHISPER_VERSION} https://github.com/ggml-org/whisper.cpp /src
 WORKDIR /src
 RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF \
       -DGGML_NATIVE=${WHISPER_NATIVE} -DGGML_OPENMP=ON \
+      ${WHISPER_ARM_ARCH:+-DGGML_CPU_ARM_ARCH=${WHISPER_ARM_ARCH}} \
     && cmake --build build -j"$(nproc)" --target whisper-cli
 
 FROM golang:1.26-bookworm AS gobuild
@@ -27,6 +30,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
 
 FROM ubuntu:24.04
+LABEL org.opencontainers.image.source="https://github.com/malinanu/youtubeclipping" \
+      org.opencontainers.image.description="ClipForge API + worker (yt-dlp, ffmpeg, whisper.cpp)"
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl tini ffmpeg libgomp1 python3 python3-venv fontconfig \

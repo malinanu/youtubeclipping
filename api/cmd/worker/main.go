@@ -51,6 +51,8 @@ func run(log *slog.Logger) error {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword, DB: cfg.RedisDB})
 	defer rdb.Close()
 
+	warnRedisEviction(ctx, rdb, log)
+
 	layout := media.Layout{Root: cfg.DataDir}
 	if err := layout.Ensure(layout.TmpDir()); err != nil {
 		return err
@@ -116,6 +118,19 @@ func run(log *slog.Logger) error {
 		s.Shutdown()
 	}
 	return nil
+}
+
+// warnRedisEviction flags shared Redis instances whose eviction policy could
+// silently drop queued jobs. CONFIG may be disabled on managed Redis; ignore errors.
+func warnRedisEviction(ctx context.Context, rdb *redis.Client, log *slog.Logger) {
+	res, err := rdb.ConfigGet(ctx, "maxmemory-policy").Result()
+	if err != nil {
+		return
+	}
+	if p, ok := res["maxmemory-policy"]; ok && p != "noeviction" {
+		log.Warn("redis maxmemory-policy is not noeviction; queued jobs may be evicted under memory pressure",
+			"policy", p, "fix", "redis-cli CONFIG SET maxmemory-policy noeviction (and persist it in redis.conf)")
+	}
 }
 
 type asynqLogger struct{ l *slog.Logger }
