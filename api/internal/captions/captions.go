@@ -136,7 +136,8 @@ func Group(words []media.Word, perLine int, maxChars int) [][]media.Word {
 
 // BuildASS renders an ASS subtitle file for a canvas of w×h.
 func BuildASS(words []media.Word, st Style, w, h int) string {
-	scale := float64(h) / 1920.0
+	// Sizes are authored for a 1080px-wide vertical canvas; square shares that width.
+	scale := float64(w) / 1080.0
 	if w > h { // landscape: size relative to the shorter edge
 		scale = float64(h) / 1080.0 * 0.75
 	}

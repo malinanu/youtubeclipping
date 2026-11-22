@@ -66,7 +66,7 @@ export function CaptionPreview({
   if (gi < 0) return null;
   const g = groups[gi];
   const px = frameH / ch; // px per canvas unit
-  const scale = landscape ? (ch / 1080) * 0.75 : ch / 1920;
+  const scale = landscape ? (ch / 1080) * 0.75 : cw / 1080;
   const fontSize = style.size * scale * px;
   const outline = style.outlineWidth * scale * px;
   const shadow = style.shadow * scale * px;
