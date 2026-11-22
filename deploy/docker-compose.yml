@@ -1,0 +1,100 @@
+# ClipForge stack. Run from this directory:  docker compose up -d --build
+# Exposes only 127.0.0.1:${HTTP_PORT} — put CloudPanel/nginx or a Cloudflare Tunnel in front for TLS.
+name: clipforge
+
+x-backend: &backend
+  build:
+    context: ../api
+    args:
+      WHISPER_NATIVE: "ON"
+  image: clipforge-backend:latest
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    DATABASE_URL: postgres://clipforge:${POSTGRES_PASSWORD}@postgres:5432/clipforge?sslmode=disable
+    REDIS_ADDR: redis:6379
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+    YTDLP_POT_URL: http://bgutil:4416
+  volumes:
+    - media:/data
+    - ./models:/models:ro
+    - ./fonts:/home/app/.fonts:ro   # optional extra caption fonts (.ttf/.otf)
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  logging: &logging
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clipforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: clipforge
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clipforge -d clipforge"]
+      interval: 5s
+      retries: 20
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    logging: *logging
+
+  # Generates YouTube PO tokens so yt-dlp looks less like a bot from datacenter IPs.
+  bgutil:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    restart: unless-stopped
+    init: true
+    logging: *logging
+
+  api:
+    <<: *backend
+    command: ["api"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 10s
+      retries: 10
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    stop_grace_period: 30s
+
+  web:
+    build:
+      context: ../web
+      args:
+        API_INTERNAL_URL: http://api:8080
+    image: clipforge-web:latest
+    restart: unless-stopped
+    depends_on: [api]
+    logging: *logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8088}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on: [api, web]
+    logging: *logging
+
+volumes:
+  pgdata:
+  redisdata:
+  media:
