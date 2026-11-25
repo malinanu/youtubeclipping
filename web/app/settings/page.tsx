@@ -7,6 +7,8 @@ import { api, type Settings, type SystemInfo } from "@/lib/api";
 
 type SecretKey = keyof Settings["secrets"];
 
+const WHISPER_MODELS = ["tiny", "base", "base.en", "small", "small.en", "medium", "medium.en", "large-v3-turbo"];
+
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [sys, setSys] = useState<SystemInfo | null>(null);
@@ -73,11 +75,14 @@ export default function SettingsPage() {
             <div>
               <label className="label">Local model</label>
               <select className="input" value={s.whisperModel} onChange={(e) => set({ whisperModel: e.target.value })}>
-                {Array.from(new Set([s.whisperModel, ...(sys?.whisperModels || [])])).map((m) => (
-                  <option key={m}>{m}</option>
+                {Array.from(new Set([s.whisperModel, ...WHISPER_MODELS, ...(sys?.whisperModels || [])])).map((m) => (
+                  <option key={m} value={m}>
+                    {m}
+                    {sys?.whisperModels.includes(m) ? " ✓ downloaded" : ""}
+                  </option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-muted">Installed: {sys?.whisperModels.join(", ") || "none — run deploy/download-models.sh"}</p>
+              <p className="mt-1 text-xs text-muted">Models download automatically on first use (small ≈ 470 MB, medium ≈ 1.5 GB).</p>
             </div>
             <div>
               <label className="label">Language</label>

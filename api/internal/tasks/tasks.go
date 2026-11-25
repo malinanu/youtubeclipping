@@ -114,7 +114,7 @@ func Resolve(cfg *config.Config, s *store.Settings) Effective {
 		s = &store.Settings{}
 	}
 	return Effective{
-		WhisperModel:       pick(s.WhisperModel, "small"),
+		WhisperModel:       pick(s.WhisperModel, pick(cfg.WhisperModel, "small")),
 		WhisperLanguage:    pick(s.WhisperLanguage, "auto"),
 		TranscribeProvider: pick(s.TranscribeProvider, "local"),
 		FallbackProvider:   pick(s.FallbackProvider, "none"),
@@ -148,4 +148,10 @@ func (e Effective) SuggestProvider() (provider, key, model string) {
 		return "gemini", e.GeminiAPIKey, e.GeminiModel
 	}
 	return "claude", e.AnthropicAPIKey, e.ClaudeModel
+}
+
+// UsesLocalWhisper reports whether transcription may run whisper.cpp
+// (as the primary provider or as the fallback behind an API).
+func (e Effective) UsesLocalWhisper() bool {
+	return e.TranscribeProvider != "openai" && e.TranscribeProvider != "groq"
 }

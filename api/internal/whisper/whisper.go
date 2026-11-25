@@ -54,11 +54,10 @@ func (l *Local) Name() string { return "whisper.cpp:" + l.Model }
 var ErrConfig = errors.New("transcription misconfigured")
 
 func (l *Local) modelPath() (string, error) {
-	p := filepath.Join(l.ModelsDir, "ggml-"+l.Model+".bin")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("%w: whisper model %q not found at %s (run deploy/download-models.sh)", ErrConfig, l.Model, p)
+	if p, ok := FindModel(l.ModelsDir, l.Model); ok {
+		return p, nil
 	}
-	return p, nil
+	return "", fmt.Errorf("%w: whisper model %q not found in %s", ErrConfig, l.Model, l.ModelsDir)
 }
 
 var progressRe = regexp.MustCompile(`progress\s*=\s*(\d+)%`)

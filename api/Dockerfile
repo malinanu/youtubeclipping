@@ -5,6 +5,8 @@
 
 ARG WHISPER_VERSION=v1.8.2
 ARG DENO_VERSION=2.5.0
+# Whisper model(s) baked into the image (space-separated), e.g. "small" or "small medium".
+ARG WHISPER_MODELS="small"
 
 FROM denoland/deno:bin-${DENO_VERSION} AS deno
 
@@ -21,6 +23,17 @@ RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_
       -DGGML_NATIVE=${WHISPER_NATIVE} -DGGML_OPENMP=ON \
       ${WHISPER_ARM_ARCH:+-DGGML_CPU_ARM_ARCH=${WHISPER_ARM_ARCH}} \
     && cmake --build build -j"$(nproc)" --target whisper-cli
+
+# Download models in their own stage so the layer is cached across code changes.
+FROM ubuntu:24.04 AS models
+ARG WHISPER_MODELS
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /opt/whisper-models && for m in ${WHISPER_MODELS}; do \
+      curl -fL --retry 5 --retry-delay 5 -o /opt/whisper-models/ggml-$m.bin \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$m.bin" \
+      && test "$(stat -c %s /opt/whisper-models/ggml-$m.bin)" -gt 1000000 || exit 1; \
+    done && chmod a+r /opt/whisper-models/*.bin && ls -lh /opt/whisper-models
 
 FROM golang:1.26-bookworm AS gobuild
 WORKDIR /src
@@ -48,11 +61,13 @@ ENV PATH=/opt/venv/bin:$PATH
 COPY --from=deno /deno /usr/local/bin/deno
 COPY --from=whisper /src/build/bin/whisper-cli /usr/local/bin/whisper-cli
 COPY --from=gobuild /out/ /usr/local/bin/
+COPY --from=models /opt/whisper-models /opt/whisper-models
 
 RUN mkdir -p /data /models && chown app:app /data /models
 USER app
 ENV DATA_DIR=/data \
     WHISPER_MODELS_DIR=/models \
+    WHISPER_BUNDLED_DIR=/opt/whisper-models \
     YTDLP_COOKIES_FILE=/data/cookies.txt \
     YTDLP_UPDATE_CMD="/opt/venv/bin/pip install -U --no-cache-dir yt-dlp[default] bgutil-ytdlp-pot-provider" \
     HTTP_ADDR=:8080

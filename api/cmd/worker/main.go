@@ -17,6 +17,7 @@ import (
 	"github.com/malinanu/youtubeclipping/api/internal/media"
 	"github.com/malinanu/youtubeclipping/api/internal/store"
 	"github.com/malinanu/youtubeclipping/api/internal/tasks"
+	"github.com/malinanu/youtubeclipping/api/internal/whisper"
 	"github.com/malinanu/youtubeclipping/api/internal/ytdlp"
 )
 
@@ -53,6 +54,7 @@ func run(log *slog.Logger) error {
 
 	warnRedisEviction(ctx, rdb, log)
 
+	whisper.BundledDir = cfg.WhisperBundle
 	layout := media.Layout{Root: cfg.DataDir}
 	if err := layout.Ensure(layout.TmpDir()); err != nil {
 		return err
@@ -69,6 +71,8 @@ func run(log *slog.Logger) error {
 		Layout: layout,
 		Log:    log,
 	}
+	go h.PreloadModel(ctx)
+
 	mux := asynq.NewServeMux()
 	h.Register(mux)
 

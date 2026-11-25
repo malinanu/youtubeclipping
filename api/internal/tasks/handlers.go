@@ -242,6 +242,20 @@ func (h *Handlers) Transcribe(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("%w: no audio path", asynq.SkipRetry)
 	}
 	eff := h.settings(ctx)
+	if eff.UsesLocalWhisper() && !whisper.HasModel(h.Cfg.WhisperModels, eff.WhisperModel) {
+		stage := "downloading model " + eff.WhisperModel
+		h.videoStatus(ctx, v.ID, "transcribing", stage, 0, "")
+		err := whisper.EnsureModel(ctx, h.Cfg.WhisperModels, eff.WhisperModel, func(f float64) {
+			h.videoProgress(ctx, v.ID, "transcribing", stage, float32(f))
+		})
+		if errors.Is(err, whisper.ErrConfig) {
+			h.videoStatus(ctx, v.ID, "failed", "", 0, err.Error())
+			return fmt.Errorf("%w: %v", asynq.SkipRetry, err)
+		}
+		if err != nil {
+			return h.failVideo(ctx, v.ID, err)
+		}
+	}
 	prov := h.provider(eff, float64(v.DurationMs)/60000)
 	h.videoStatus(ctx, v.ID, "transcribing", prov.Name(), 0, "")
 	res, err := prov.Transcribe(ctx, wav, float64(v.DurationMs)/1000, func(f float64) {
@@ -566,4 +580,26 @@ func (h *Handlers) UpdateYtDlp(ctx context.Context, _ *asynq.Task) error {
 	out, err := h.YtDlp.Update(ctx)
 	h.Log.Info("yt-dlp update", "output", strings.TrimSpace(out), "err", err)
 	return nil
+}
+
+// PreloadModel downloads the configured whisper model in the background at
+// worker start, so the first transcription doesn't wait for it.
+func (h *Handlers) PreloadModel(ctx context.Context) {
+	eff := h.settings(ctx)
+	if !eff.UsesLocalWhisper() || whisper.HasModel(h.Cfg.WhisperModels, eff.WhisperModel) {
+		return
+	}
+	h.Log.Info("downloading whisper model", "model", eff.WhisperModel, "dir", h.Cfg.WhisperModels)
+	last := -1
+	err := whisper.EnsureModel(ctx, h.Cfg.WhisperModels, eff.WhisperModel, func(f float64) {
+		if pct := int(f * 10); pct != last {
+			last = pct
+			h.Log.Info("whisper model download", "model", eff.WhisperModel, "progress", fmt.Sprintf("%d%%", pct*10))
+		}
+	})
+	if err != nil {
+		h.Log.Error("whisper model download failed", "model", eff.WhisperModel, "err", err)
+		return
+	}
+	h.Log.Info("whisper model ready", "model", eff.WhisperModel)
 }

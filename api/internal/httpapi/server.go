@@ -183,10 +183,20 @@ func (s *Server) sse(c *gin.Context) {
 }
 
 func (s *Server) system(c *gin.Context) {
-	models, _ := filepath.Glob(filepath.Join(s.Cfg.WhisperModels, "ggml-*.bin"))
 	names := []string{}
-	for _, m := range models {
-		names = append(names, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m), "ggml-"), ".bin"))
+	seen := map[string]bool{}
+	for _, dir := range []string{s.Cfg.WhisperModels, s.Cfg.WhisperBundle} {
+		if dir == "" {
+			continue
+		}
+		models, _ := filepath.Glob(filepath.Join(dir, "ggml-*.bin"))
+		for _, m := range models {
+			n := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(m), "ggml-"), ".bin")
+			if !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
 	}
 	_, cookieErr := os.Stat(s.Cfg.CookiesFile)
 	c.JSON(200, gin.H{

@@ -32,6 +32,7 @@ x-backend: &backend
     GROQ_API_KEY: ${GROQ_API_KEY:-}
     POSTIZ_API_URL: ${POSTIZ_API_URL:-}
     POSTIZ_API_KEY: ${POSTIZ_API_KEY:-}
+    WHISPER_MODEL: ${WHISPER_MODEL:-small}
     WHISPER_THREADS: ${WHISPER_THREADS:-4}
     FFMPEG_THREADS: ${FFMPEG_THREADS:-4}
     RENDER_CONCURRENCY: ${RENDER_CONCURRENCY:-1}
@@ -44,7 +45,7 @@ x-backend: &backend
     YTDLP_POT_URL: http://bgutil:4416
   volumes:
     - media:/data
-    - ${MODELS_DIR:-/opt/clipforge/models}:/models:ro
+    - models:/models   # whisper models, downloaded automatically on first start
   extra_hosts:
     - "host.docker.internal:host-gateway"
   depends_on:
@@ -96,4 +97,5 @@ services:
 
 volumes:
   media:
+  models:
   redisdata:

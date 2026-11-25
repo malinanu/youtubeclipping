@@ -34,7 +34,9 @@ type Config struct {
 	FFmpegBin     string
 	FFprobeBin    string
 	WhisperBin    string
-	WhisperModels string // dir with ggml-*.bin
+	WhisperModels string // dir with ggml-*.bin (auto-downloaded when missing)
+	WhisperModel  string // default model, preloaded at worker start
+	WhisperBundle string // read-only dir of models baked into the image
 	CookiesFile   string // optional yt-dlp cookies.txt
 	YtDlpProxy    string // optional proxy for yt-dlp
 	YtDlpPOTURL   string // optional bgutil PO-token provider, e.g. http://bgutil:4416
@@ -85,6 +87,8 @@ func Load() (*Config, error) {
 		FFprobeBin:    env("FFPROBE_BIN", "ffprobe"),
 		WhisperBin:    env("WHISPER_BIN", "whisper-cli"),
 		WhisperModels: env("WHISPER_MODELS_DIR", "/models"),
+		WhisperModel:  env("WHISPER_MODEL", "small"),
+		WhisperBundle: env("WHISPER_BUNDLED_DIR", ""),
 		CookiesFile:   env("YTDLP_COOKIES_FILE", ""),
 		YtDlpProxy:    env("YTDLP_PROXY", ""),
 		YtDlpPOTURL:   env("YTDLP_POT_URL", ""),

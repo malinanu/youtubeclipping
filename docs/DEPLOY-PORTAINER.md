@@ -84,19 +84,11 @@ docker exec <redis-container> redis-cli CONFIG GET maxmemory-policy
 
 The worker also logs a warning at startup when the policy is anything else.
 
-## 4. Whisper models on the host
+## 4. Whisper models: nothing to do
 
-```bash
-sudo mkdir -p /opt/clipforge/models && sudo chown $USER /opt/clipforge/models
-```
-```bash
-curl -fsSL https://raw.githubusercontent.com/malinanu/youtubeclipping/main/deploy/download-models.sh -o /tmp/dm.sh
-```
-```bash
-MODELS_DIR=/opt/clipforge/models bash /tmp/dm.sh small
-```
+The `small` model (~470 MB) is **baked into the backend image**, so transcription works the moment the stack starts. Nothing is downloaded on the server.
 
-If the repo is private, copy `deploy/download-models.sh` onto the server with `scp` instead of curl. Other options are `small.en` (English only), `medium` and `large-v3-turbo`. See the speed table in [DEPLOY-ORACLE.md](DEPLOY-ORACLE.md#3-build-set-the-admin-password-download-models).
+If you pick a different model in **Settings → Transcription** (for example `medium` or `large-v3-turbo`), the worker downloads it automatically on first use into the `models` volume. The video shows *downloading model* progress while that happens. To bake different models into the image instead, change the `WHISPER_MODELS` build arg in `.github/workflows/images.yml`.
 
 ## 5. Images: let Portainer pull from GHCR
 
@@ -146,7 +138,6 @@ GROQ_API_KEY=
 POSTIZ_API_URL=
 POSTIZ_API_KEY=
 
-MODELS_DIR=/opt/clipforge/models
 API_PORT=18080
 WEB_PORT=13000
 CLIPFORGE_TAG=latest

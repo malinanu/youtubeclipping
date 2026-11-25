@@ -58,6 +58,7 @@ jobs:
             build-args: |
               WHISPER_NATIVE=OFF
               WHISPER_ARM_ARCH=armv8.2-a+dotprod+fp16
+              WHISPER_MODELS=small
           - name: web
             context: web
             build-args: |

@@ -21,6 +21,7 @@ import (
 	"github.com/malinanu/youtubeclipping/api/internal/media"
 	"github.com/malinanu/youtubeclipping/api/internal/store"
 	"github.com/malinanu/youtubeclipping/api/internal/tasks"
+	"github.com/malinanu/youtubeclipping/api/internal/whisper"
 	"github.com/malinanu/youtubeclipping/api/internal/ytdlp"
 )
 
@@ -58,6 +59,7 @@ func run(log *slog.Logger) error {
 	rdb := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, Password: cfg.RedisPassword, DB: cfg.RedisDB})
 	defer rdb.Close()
 
+	whisper.BundledDir = cfg.WhisperBundle
 	layout := media.Layout{Root: cfg.DataDir}
 	if err := layout.Ensure(layout.TmpDir()); err != nil {
 		return err

@@ -17,7 +17,7 @@ x-backend: &backend
     YTDLP_POT_URL: http://bgutil:4416
   volumes:
     - media:/data
-    - ./models:/models:ro
+    - models:/models   # whisper models, downloaded automatically on first start
     - ./fonts:/home/app/.fonts:ro   # optional extra caption fonts (.ttf/.otf)
   depends_on:
     postgres: { condition: service_healthy }
@@ -95,6 +95,7 @@ services:
     logging: *logging
 
 volumes:
+  models:
   pgdata:
   redisdata:
   media:
