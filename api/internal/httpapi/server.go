@@ -101,7 +101,7 @@ func (s *Server) logger() gin.HandlerFunc {
 			return
 		}
 		s.Log.Info("http", "method", c.Request.Method, "path", c.Request.URL.Path, "status", c.Writer.Status(),
-			"dur", time.Since(start).Round(time.Millisecond))
+			"ms", time.Since(start).Milliseconds())
 	}
 }
 

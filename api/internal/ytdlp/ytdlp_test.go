@@ -1,6 +1,12 @@
 package ytdlp
 
-import "testing"
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestValidateURL(t *testing.T) {
 	cases := []struct {
@@ -47,5 +53,21 @@ func TestProgressTracker(t *testing.T) {
 	}
 	if _, ok := tr.parse("[download] Destination: x"); ok {
 		t.Fatal("non-progress line parsed")
+	}
+}
+
+func TestProbeTimeout(t *testing.T) {
+	dir := t.TempDir()
+	fake := dir + "/yt-dlp"
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := ProbeTimeout
+	ProbeTimeout = 300 * time.Millisecond
+	defer func() { ProbeTimeout = old }()
+	start := time.Now()
+	_, err := (&Client{Bin: fake}).Probe(context.Background(), "https://youtu.be/x", "")
+	if err == nil || !strings.Contains(err.Error(), "timed out") || time.Since(start) > 5*time.Second {
+		t.Fatalf("err=%v after %s", err, time.Since(start))
 	}
 }

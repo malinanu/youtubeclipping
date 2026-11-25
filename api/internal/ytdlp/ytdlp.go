@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -101,7 +102,8 @@ type Info struct {
 }
 
 func (c *Client) baseArgs() []string {
-	args := []string{"--no-playlist", "--no-warnings", "--no-progress", "--ignore-config"}
+	// --socket-timeout stops a stalled connection from hanging a job forever.
+	args := []string{"--no-playlist", "--no-warnings", "--no-progress", "--ignore-config", "--socket-timeout", "30"}
 	if c.CookiesFile != "" {
 		if _, err := os.Stat(c.CookiesFile); err == nil {
 			args = append(args, "--cookies", c.CookiesFile)
@@ -118,7 +120,12 @@ func (c *Client) baseArgs() []string {
 
 // Probe fetches metadata without downloading. If format is non-empty the
 // selected format(s) are resolved too (requested_formats / url).
+// ProbeTimeout bounds metadata extraction (JS challenge + PO token included).
+var ProbeTimeout = 3 * time.Minute
+
 func (c *Client) Probe(ctx context.Context, rawURL, format string) (*Info, error) {
+	ctx, cancel := context.WithTimeout(ctx, ProbeTimeout)
+	defer cancel()
 	args := append(c.baseArgs(), "-J")
 	if format != "" {
 		args = append(args, "-f", format)
@@ -128,6 +135,10 @@ func (c *Client) Probe(ctx context.Context, rawURL, format string) (*Info, error
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("yt-dlp timed out after %s reading video info (YouTube may be challenging this server; try cookies or a proxy): %s",
+				ProbeTimeout, tail(stderr.String(), 600))
+		}
 		return nil, fmt.Errorf("yt-dlp probe: %w: %s", err, tail(stderr.String(), 800))
 	}
 	var info Info
