@@ -1,8 +1,8 @@
 # ClipForge stack for Portainer (Stacks → Add stack → Repository, compose path: deploy/portainer-stack.yml).
 #
-# Uses your EXISTING Postgres and Redis containers, reached through the Docker host gateway
-# (172.17.0.1 or host.docker.internal) where their ports are published, and prebuilt arm64
-# images from GHCR. CloudPanel's nginx is the public entry point:
+# Uses your EXISTING Postgres (reached through the Docker host gateway 172.17.0.1 /
+# host.docker.internal where its port is published), a small private Redis for the job
+# queue (bundled below), and prebuilt arm64 images from GHCR. CloudPanel's nginx is the public entry point:
 #   /api/* → 127.0.0.1:${API_PORT}   everything else → 127.0.0.1:${WEB_PORT}
 # See docs/DEPLOY-PORTAINER.md for the variables to set in Portainer.
 
@@ -15,9 +15,10 @@ x-backend: &backend
   restart: unless-stopped
   environment:
     DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
-    REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR (e.g. 172.17.0.1:6379)}
+    # Defaults to the bundled queue Redis. Set REDIS_ADDR only to use an external one.
+    REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
     REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    REDIS_DB: ${REDIS_DB:-5}
+    REDIS_DB: ${REDIS_DB:-0}
     ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL}
     ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH}
     SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
@@ -46,9 +47,24 @@ x-backend: &backend
     - ${MODELS_DIR:-/opt/clipforge/models}:/models:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
+  depends_on:
+    redis: { condition: service_healthy }
   logging: *logging
 
 services:
+  # Private Redis for ClipForge's job queue: not published, persistent, never evicts jobs.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+    logging: *logging
+
   api:
     <<: *backend
     command: ["api"]
@@ -69,7 +85,6 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:${WEB_PORT:-13000}:3000"
-    depends_on: [api]
     logging: *logging
 
   # Generates YouTube PO tokens so yt-dlp looks less like a bot from datacenter IPs.
@@ -81,3 +96,4 @@ services:
 
 volumes:
   media:
+  redisdata:

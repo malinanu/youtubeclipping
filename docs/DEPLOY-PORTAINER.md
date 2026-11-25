@@ -6,8 +6,8 @@ This guide fits a server where **Portainer** manages Docker, **Postgres** and **
 Internet ─TLS─► CloudPanel nginx (clips.example.com)
                    ├─ /api/*  ─► 127.0.0.1:18080   api  (Go, live progress via SSE)
                    └─ /       ─► 127.0.0.1:13000   web  (Next.js)
-Portainer stack "clipforge":  api · worker · web · bgutil
-   └─ via the Docker host gateway 172.17.0.1 ─► postgres :5432 (database "clipforge") · redis :6379 (DB index 5)
+Portainer stack "clipforge":  api · worker · web · bgutil · redis (private job queue, not published)
+   └─ via the Docker host gateway 172.17.0.1 ─► your postgres :5432 (database "clipforge")
 ```
 
 Images are built for arm64 by GitHub Actions (`.github/workflows/images.yml`) and published to GHCR:
@@ -35,9 +35,11 @@ CREATE DATABASE clipforge OWNER clipforge;
 
 The tables are created automatically on first start, through embedded migrations.
 
-## 2. How ClipForge reaches Postgres and Redis
+## 2. How ClipForge reaches Postgres
 
-ClipForge connects through the **Docker host gateway**, `172.17.0.1`, to the ports your Postgres and Redis containers publish on the host. `host.docker.internal` also works and resolves to the same address.
+The stack includes its **own small Redis** for the job queue. It isn't published, never evicts jobs, and needs no setup, so you don't have to connect your existing Redis. To use an external Redis anyway, set `REDIS_ADDR` (and `REDIS_PASSWORD`/`REDIS_DB`) in the stack env.
+
+ClipForge reaches your Postgres through the **Docker host gateway**, `172.17.0.1`, at the port it publishes on the host. `host.docker.internal` also works and resolves to the same address.
 
 > Don't use `localhost`. Inside a container, `localhost` is the container itself, not your server.
 
@@ -71,7 +73,7 @@ If you'd rather not publish ports, put Postgres, Redis and ClipForge on one user
 3. Use the container names in the URLs, for example `@postgres:5432` and `REDIS_ADDR=redis:6379`.
 </details>
 
-## 3. Redis checks
+## 3. Redis checks (only if you point REDIS_ADDR at an external Redis)
 
 ClipForge uses its own DB index (default `5`), so its keys never mix with other apps'. One setting matters on a shared Redis: if `maxmemory-policy` evicts keys, queued jobs can disappear under memory pressure. Check it:
 
@@ -128,9 +130,6 @@ The first command outputs the value for `ADMIN_PASSWORD_HASH`. It's the bcrypt h
 
 ```env
 DATABASE_URL=postgres://clipforge:<your-db-password>@172.17.0.1:5432/clipforge?sslmode=disable
-REDIS_ADDR=172.17.0.1:6379
-REDIS_PASSWORD=
-REDIS_DB=5
 
 ADMIN_EMAIL=you@example.com
 ADMIN_PASSWORD_HASH=paste-hashpw-output-from-step-6
@@ -156,7 +155,7 @@ FFMPEG_THREADS=4
 MEDIA_RETENTION_DAYS=14
 ```
 
-Leave `REDIS_PASSWORD` empty if your Redis has no password. Use a hex or alphanumeric DB password; symbols such as `@`, `/` and `#` break the URL unless they're percent-encoded.
+Use a hex or alphanumeric DB password; symbols such as `@`, `/` and `#` break the URL unless they're percent-encoded.
 
 Click **Deploy the stack**. Then check that the API is healthy:
 

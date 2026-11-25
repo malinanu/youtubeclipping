@@ -227,6 +227,8 @@ func (s *Server) createVideo(c *gin.Context) {
 		return
 	}
 	if err := s.Enq.Ingest(ctx, v.ID); err != nil {
+		// Don't leave the video stuck in "queued": mark it failed so Retry is offered.
+		_ = s.Store.SetVideoStatus(context.WithoutCancel(ctx), v.ID, "failed", "", 0, "could not queue job (is Redis reachable?): "+err.Error())
 		fail(c, err)
 		return
 	}
@@ -269,6 +271,7 @@ func (s *Server) retryVideo(c *gin.Context) {
 			if _, err := os.Stat(abs); err == nil {
 				_ = s.Store.SetVideoStatus(ctx, v.ID, "transcribing", "queued", 0, "")
 				if err := s.Enq.Transcribe(ctx, v.ID); err != nil {
+					_ = s.Store.SetVideoStatus(context.WithoutCancel(ctx), v.ID, "failed", "", 0, "could not queue job: "+err.Error())
 					fail(c, err)
 					return
 				}
@@ -279,6 +282,7 @@ func (s *Server) retryVideo(c *gin.Context) {
 	}
 	_ = s.Store.SetVideoStatus(ctx, v.ID, "queued", "", 0, "")
 	if err := s.Enq.Ingest(ctx, v.ID); err != nil {
+		_ = s.Store.SetVideoStatus(context.WithoutCancel(ctx), v.ID, "failed", "", 0, "could not queue job: "+err.Error())
 		fail(c, err)
 		return
 	}
@@ -298,6 +302,7 @@ func (s *Server) retranscribe(c *gin.Context) {
 	}
 	_ = s.Store.SetVideoStatus(ctx, v.ID, "transcribing", "queued", 0, "")
 	if err := s.Enq.Transcribe(ctx, v.ID); err != nil {
+		_ = s.Store.SetVideoStatus(context.WithoutCancel(ctx), v.ID, "failed", "", 0, "could not queue job: "+err.Error())
 		fail(c, err)
 		return
 	}
