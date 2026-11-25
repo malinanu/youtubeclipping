@@ -133,3 +133,16 @@ func TestTwitchSkipsClientFallback(t *testing.T) {
 		t.Fatalf("twitch should run once without player_client:\n%s", calls)
 	}
 }
+
+func TestReloadErrorFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	bin := dir + "/yt-dlp"
+	script := "#!/bin/sh\ncase \"$*\" in *player_client=tv*) echo '{\"id\":\"x\",\"title\":\"OK\"}'; exit 0;; esac\n" +
+		"echo 'ERROR: [youtube] jNQXAC9IVRw: The page needs to be reloaded.' >&2\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := (&Client{Bin: bin}).Probe(context.Background(), "https://www.youtube.com/watch?v=jNQXAC9IVRw", ""); err != nil || info.Title != "OK" {
+		t.Fatalf("reload error should fall back to tv client: %v", err)
+	}
+}

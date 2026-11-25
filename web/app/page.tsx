@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link2, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { Shell, ProgressBar, StatusBadge } from "@/components/Shell";
 import { api, type Video } from "@/lib/api";
-import { useServerEvents } from "@/lib/events";
+import { usePoll, useServerEvents } from "@/lib/events";
 import { fmtTime, needsCookies } from "@/lib/util";
 
 export default function Home() {
@@ -19,7 +19,7 @@ export default function Home() {
     load();
   }, [load]);
 
-  useServerEvents((e) => {
+  const live = useServerEvents((e) => {
     if (e.kind !== "video") return;
     setVideos((vs) => {
       if (!vs) return vs;
@@ -34,6 +34,10 @@ export default function Home() {
       );
     });
   });
+
+  // Fallback when live events don't arrive (e.g. a buffering proxy): poll while busy.
+  const anyBusy = !!videos?.some((v) => v.status === "queued" || v.status === "downloading" || v.status === "transcribing");
+  usePoll(anyBusy, live ? 15_000 : 3_000, load);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

@@ -8,7 +8,7 @@ import { Timeline, Trimmer } from "@/components/editor/Timeline";
 import { TranscriptPanel } from "@/components/editor/TranscriptPanel";
 import { ClipPanel, mergeOverrides } from "@/components/editor/ClipPanel";
 import { api, type CaptionStyle, type Clip, type Transcript, type Video } from "@/lib/api";
-import { useServerEvents } from "@/lib/events";
+import { usePoll, useServerEvents } from "@/lib/events";
 import { cn, fmtTime, needsCookies } from "@/lib/util";
 
 export default function VideoPage({ params }: { params: Promise<{ id: string }> }) {
@@ -37,7 +37,7 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
     loadClips();
   }, [id, loadClips]);
 
-  useServerEvents((e) => {
+  const live = useServerEvents((e) => {
     if (e.videoId !== id && e.id !== id) return;
     if (e.kind === "video") {
       setVideo((v) => (v ? { ...v, status: e.status as Video["status"], stage: e.stage ?? "", progress: e.progress, error: e.error ?? "" } : v));
@@ -54,6 +54,41 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
       if (e.status === "done") {
         loadClips();
         setTab("clips");
+      }
+    }
+  });
+
+  // Fallback when live events don't arrive (e.g. a buffering proxy): poll while anything is in progress.
+  const videoBusy = !!video && video.status !== "ready" && video.status !== "failed";
+  const clipsBusy = clips.some((c) => c.status === "queued" || c.status === "rendering");
+  const suggestBusy = suggest.status === "queued" || suggest.status === "running";
+  usePoll(videoBusy || clipsBusy || suggestBusy, live ? 15_000 : 3_000, async () => {
+    if (videoBusy) {
+      const v = await api.video(id).catch(() => null);
+      if (v) {
+        setVideo(v);
+        if (v.status === "ready") api.transcript(id).then(setTranscript).catch(() => {});
+      }
+    }
+    if (clipsBusy) {
+      const fresh = await api.clips(id).catch(() => null);
+      // Keep local edits: only take server status/progress/output fields.
+      if (fresh)
+        setClips((cs) =>
+          cs.map((c) => {
+            const f = fresh.find((x) => x.id === c.id);
+            return f ? { ...c, status: f.status, progress: f.progress, error: f.error, hasOutput: f.hasOutput, renderedAt: f.renderedAt } : c;
+          }),
+        );
+    }
+    if (suggestBusy) {
+      const st = await api.suggestStatus(id).catch(() => null);
+      if (st) {
+        setSuggest(st);
+        if (st.status === "done") {
+          loadClips();
+          setTab("clips");
+        }
       }
     }
   });

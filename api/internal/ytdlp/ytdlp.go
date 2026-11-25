@@ -423,7 +423,10 @@ func formatsMissing(err error) bool {
 	s := err.Error()
 	return strings.Contains(s, "Requested format is not available") ||
 		strings.Contains(s, "No video formats found") ||
-		strings.Contains(s, "Only images are available")
+		strings.Contains(s, "Only images are available") ||
+		// YouTube's "The page needs to be reloaded" is returned to one client
+		// (usually web with cookies); others typically still work.
+		strings.Contains(s, "page needs to be reloaded")
 }
 
 func isYouTube(rawURL string) bool {

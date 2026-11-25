@@ -49,6 +49,8 @@ func FriendlyError(err error) string {
 		return "This video is private or members-only. Upload cookies for an account that can watch it. " + trim(s, 200)
 	case strings.Contains(s, "Video unavailable") || strings.Contains(s, "has been removed") || strings.Contains(s, "no longer available"):
 		return "This video is unavailable (removed, region-locked or wrong link). " + trim(s, 200)
+	case strings.Contains(s, "no downloadable formats from YouTube") && strings.Contains(s, "page needs to be reloaded"):
+		return "YouTube rejected every player client (\"The page needs to be reloaded\"). Your cookies were most likely rotated or invalidated by YouTube. Re-export them with the incognito steps in Settings, upload, click Test, then Retry. Details: " + trim(s, 600)
 	case strings.Contains(s, "no downloadable formats from YouTube"):
 		return "YouTube accepted the request but offered no downloadable streams for any player client. Usually the cookies were rotated or flagged: re-export them (incognito steps in Settings → YouTube access), upload, Test, then Retry. If it keeps happening, set YTDLP_PROXY. Details: " + trim(s, 900)
 	case errors.Is(err, ErrLive):

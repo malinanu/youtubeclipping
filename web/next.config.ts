@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  // gzip buffers the /api/events stream when requests are proxied through Next;
+  // compression is handled by the reverse proxy (CloudPanel nginx / Caddy).
+  compress: false,
   images: { unoptimized: true },
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${apiURL}/api/:path*` }];

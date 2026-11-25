@@ -160,17 +160,21 @@ func (s *Server) sse(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no") // nginx/CloudPanel: disable buffering
 	ctx := c.Request.Context()
 	ch := s.Bus.Subscribe(ctx)
-	ping := time.NewTicker(20 * time.Second)
+	ping := time.NewTicker(10 * time.Second)
 	defer ping.Stop()
 	c.Writer.WriteHeader(200)
-	_, _ = io.WriteString(c.Writer, "retry: 3000\n\n")
+	// A named hello event (plus pings) lets the browser verify that events
+	// actually arrive; buffering proxies would otherwise fail silently.
+	_, _ = io.WriteString(c.Writer, "retry: 3000\nevent: hello\ndata: {}\n\n")
+	// Pad past proxy buffers (2-8 KB) so the first bytes flush immediately.
+	_, _ = io.WriteString(c.Writer, ":"+strings.Repeat(" ", 4096)+"\n\n")
 	c.Writer.Flush()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ping.C:
-			_, _ = io.WriteString(c.Writer, ": ping\n\n")
+			_, _ = io.WriteString(c.Writer, "event: ping\ndata: {}\n\n")
 			c.Writer.Flush()
 		case e, ok := <-ch:
 			if !ok {
