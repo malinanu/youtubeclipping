@@ -56,7 +56,7 @@ func upload(t *testing.T, s *Server, ck *http.Cookie, content string) (int, map[
 func TestUploadCookiesValidation(t *testing.T) {
 	s, ck := testServer(t, "exit 0\n")
 	code, out := upload(t, s, ck, ".example.com\tTRUE\t/\tFALSE\t0\tsid\t1\n")
-	if code != 400 || !strings.Contains(out["error"].(string), "no youtube.com cookies") {
+	if code != 400 || !strings.Contains(out["error"].(string), "no youtube.com or twitch.tv cookies") {
 		t.Fatalf("non-youtube: %d %v", code, out)
 	}
 	code, out = upload(t, s, ck, ".youtube.com\tTRUE\t/\tTRUE\t1893456000\tVISITOR_INFO1_LIVE\tq\n")
@@ -92,5 +92,16 @@ func TestYouTubeTestEndpoint(t *testing.T) {
 	out := youtubeTest(t, s, ck)
 	if out["ok"] != false || !strings.Contains(out["error"].(string), "Settings → YouTube access") {
 		t.Fatalf("bot-check case: %v", out)
+	}
+}
+
+func TestUploadTwitchKeepsYouTube(t *testing.T) {
+	s, ck := testServer(t, "exit 0\n")
+	if code, _ := upload(t, s, ck, ".youtube.com\tTRUE\t/\tTRUE\t1893456000\tLOGIN_INFO\tabc\n"); code != 200 {
+		t.Fatal("youtube upload failed")
+	}
+	code, out := upload(t, s, ck, ".twitch.tv\tTRUE\t/\tTRUE\t1893456000\tauth-token\txyz\n")
+	if code != 200 || out["youtubeCookies"].(float64) != 1 || out["twitchCookies"].(float64) != 1 || out["warning"] != "" {
+		t.Fatalf("twitch upload: %d %v", code, out)
 	}
 }

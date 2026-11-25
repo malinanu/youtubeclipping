@@ -177,7 +177,7 @@ export const api = {
   uploadCookies: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return request<{ ok: boolean; youtubeCookies: number; loggedIn: boolean; warning?: string }>("POST", "/settings/cookies", fd);
+    return request<{ ok: boolean; youtubeCookies: number; twitchCookies: number; loggedIn: boolean; twitchLoggedIn: boolean; warning?: string }>("POST", "/settings/cookies", fd);
   },
   youtubeTest: () => request<{ ok: boolean; cookiesUsed: boolean; title?: string; error?: string }>("POST", "/settings/youtube-test"),
   deleteCookies: () => request("DELETE", "/settings/cookies"),

@@ -20,7 +20,7 @@ export function parseTime(s: string): number {
 
 /** True when an error needs fresh YouTube cookies (bot check / private video). */
 export function needsCookies(err: string): boolean {
-  return /cookies|not a bot|Sign in to confirm/i.test(err);
+  return /cookies|not a bot|Sign in to confirm|subscriber-only/i.test(err);
 }
 
 export function cn(...c: (string | false | null | undefined)[]) {

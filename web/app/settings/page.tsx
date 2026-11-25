@@ -168,7 +168,7 @@ export default function SettingsPage() {
           <span className="text-sm text-muted">{msg}</span>
         </div>
 
-        <Section title="YouTube access (cookies)" id="youtube">
+        <Section title="YouTube & Twitch access (cookies)" id="youtube">
           <p className="mb-2 text-sm text-muted">
             YouTube often blocks cloud servers (&quot;Sign in to confirm you&apos;re not a bot&quot;). Give ClipForge cookies from a logged-in browser. Status:{" "}
             <b>{sys?.cookiesSet ? "uploaded" : "not set"}</b> · yt-dlp {sys?.ytdlpVersion}
@@ -181,6 +181,10 @@ export default function SettingsPage() {
             </li>
             <li>Upload the file here, then click <b>Test YouTube access</b>.</li>
           </ol>
+          <p className="mb-3 text-xs text-muted">
+            For <b>subscriber-only Twitch VODs</b>, export cookies the same way while on twitch.tv with an account subscribed to that channel. Uploads are merged per site, so a
+            Twitch upload keeps your YouTube cookies (and vice versa).
+          </p>
           {cookieWarn && <p className="mb-2 rounded bg-amber-950/40 p-2 text-xs text-amber-300">{cookieWarn}</p>}
           <div className="flex flex-wrap gap-2">
             <label className="btn-ghost cursor-pointer">
@@ -197,7 +201,9 @@ export default function SettingsPage() {
                     const r = await api.uploadCookies(f);
                     setCookieWarn(r.warning || "");
                     setSys(await api.system());
-                    setMsg(`Cookies uploaded (${r.youtubeCookies} YouTube cookies${r.loggedIn ? ", logged in" : ""})`);
+                    setMsg(
+                      `Cookies saved: YouTube ${r.youtubeCookies}${r.loggedIn ? " (logged in)" : ""}, Twitch ${r.twitchCookies}${r.twitchLoggedIn ? " (logged in)" : ""}`,
+                    );
                   } catch (err) {
                     setCookieWarn((err as Error).message);
                   }

@@ -165,7 +165,7 @@ func (c *Client) probeOnce(ctx context.Context, rawURL, format string, extra []s
 		return nil, fmt.Errorf("yt-dlp probe json: %w", err)
 	}
 	if info.IsLive || info.LiveStatus == "is_live" || info.LiveStatus == "is_upcoming" {
-		return nil, errors.New("live streams are not supported; wait until the VOD is available")
+		return nil, ErrLive
 	}
 	return &info, nil
 }

@@ -53,3 +53,35 @@ func TestInspectCookies(t *testing.T) {
 		t.Fatalf("non-youtube file: %+v", r)
 	}
 }
+
+func TestMergeCookies(t *testing.T) {
+	yt := ".youtube.com\tTRUE\t/\tTRUE\t1893456000\tLOGIN_INFO\tyt1\n"
+	tw := ".twitch.tv\tTRUE\t/\tTRUE\t1893456000\tauth-token\ttw1\n.example.com\tTRUE\t/\tFALSE\t0\tx\t1\n"
+	merged := MergeCookies([]byte(yt), []byte(tw))
+	r := InspectCookies(merged)
+	if r.YouTube != 1 || r.Twitch != 1 || !r.LoggedIn || !r.TwitchLoggedIn {
+		t.Fatalf("merge lost a site: %+v\n%s", r, merged)
+	}
+	if strings.Contains(string(merged), "example.com") {
+		t.Fatal("unsupported domains must be dropped")
+	}
+	// Re-uploading YouTube replaces only YouTube cookies.
+	yt2 := "#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t1893456000\t__Secure-3PSID\tyt2\n"
+	merged = MergeCookies(merged, []byte(yt2))
+	if strings.Contains(string(merged), "yt1") || !strings.Contains(string(merged), "yt2") || !strings.Contains(string(merged), "tw1") {
+		t.Fatalf("replace by site failed:\n%s", merged)
+	}
+	if !strings.HasPrefix(string(merged), "# Netscape HTTP Cookie File") {
+		t.Fatal("header missing")
+	}
+}
+
+func TestLiveAndSubscriberOnly(t *testing.T) {
+	if !IsPermanent(ErrLive) || !strings.Contains(FriendlyError(ErrLive), "stream ends") {
+		t.Fatal("live")
+	}
+	sub := errors.New("ERROR: [twitch:vod] 2932443336: You must be logged into an account that has access to this subscriber-only content.")
+	if !IsPermanent(sub) || !strings.Contains(FriendlyError(sub), "subscriber-only") {
+		t.Fatalf("sub-only: %s", FriendlyError(sub))
+	}
+}

@@ -823,14 +823,21 @@ func (s *Server) uploadCookies(c *gin.Context) {
 		return
 	}
 	rep := ytdlp.InspectCookies(data)
-	if rep.YouTube == 0 {
-		bad(c, "this file has no youtube.com cookies — export it while on youtube.com")
+	if rep.YouTube == 0 && rep.Twitch == 0 {
+		bad(c, "this file has no youtube.com or twitch.tv cookies — export it while on youtube.com or twitch.tv")
 		return
 	}
 	warning := ""
-	if !rep.LoggedIn {
-		warning = "These cookies look logged-out (no YouTube/Google session cookie). YouTube will likely still block — log in first, then export again."
+	if rep.YouTube > 0 && !rep.LoggedIn {
+		warning = "These YouTube cookies look logged-out (no session cookie). YouTube will likely still block — log in first, then export again."
 	}
+	if rep.Twitch > 0 && !rep.TwitchLoggedIn {
+		warning = strings.TrimSpace(warning + " These Twitch cookies have no auth-token — log in to Twitch first, then export again.")
+	}
+	// Merge by site: a Twitch upload keeps existing YouTube cookies and vice versa.
+	existing, _ := os.ReadFile(s.Cfg.CookiesFile)
+	data = ytdlp.MergeCookies(existing, data)
+	rep = ytdlp.InspectCookies(data)
 	if err := os.MkdirAll(filepath.Dir(s.Cfg.CookiesFile), 0o755); err != nil {
 		fail(c, err)
 		return
@@ -839,7 +846,8 @@ func (s *Server) uploadCookies(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"ok": true, "youtubeCookies": rep.YouTube, "loggedIn": rep.LoggedIn, "warning": warning})
+	c.JSON(200, gin.H{"ok": true, "youtubeCookies": rep.YouTube, "twitchCookies": rep.Twitch,
+		"loggedIn": rep.LoggedIn, "twitchLoggedIn": rep.TwitchLoggedIn, "warning": warning})
 }
 
 // YouTubeTestURL is a stable public video used to check YouTube access.
