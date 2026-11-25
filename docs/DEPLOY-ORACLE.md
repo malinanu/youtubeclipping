@@ -97,7 +97,7 @@ sudo netfilter-persistent save
 YouTube often blocks Oracle, AWS and other cloud IPs with *"Sign in to confirm you're not a bot"* or HTTP 403 on downloads. The stack includes these mitigations, in order of effectiveness:
 
 1. **PO tokens.** The `bgutil` sidecar is enabled by default (`YTDLP_POT_URL`).
-2. **Cookies.** Go to **Settings → Upload cookies.txt**. Export it from a logged-in browser (for example with the "Get cookies.txt LOCALLY" extension) **using a throwaway Google account**, because the account can be rate-limited. Cookies expire, so re-upload them if errors come back.
+2. **Cookies (this is what fixes "Sign in to confirm you're not a bot").** In a **private/incognito** window, log in to YouTube with a **throwaway** Google account, open youtube.com, export cookies with the "Get cookies.txt LOCALLY" extension, then **close the private window** so YouTube doesn't rotate the cookies. Upload the file in **Settings → YouTube access** and click **Test YouTube access**. Cookies expire eventually; when the test fails again, re-export.
 3. **Proxy.** Set `YTDLP_PROXY` to a residential or ISP proxy if 1 and 2 aren't enough.
 4. **Keep yt-dlp fresh.** The worker updates yt-dlp nightly at 04:43 UTC. To update now:
 

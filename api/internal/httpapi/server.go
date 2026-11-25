@@ -88,6 +88,7 @@ func (s *Server) Router() *gin.Engine {
 	p.GET("/settings", s.getSettings)
 	p.PUT("/settings", s.putSettings)
 	p.POST("/settings/cookies", s.uploadCookies)
+	p.POST("/settings/youtube-test", s.youtubeTest)
 	p.DELETE("/settings/cookies", s.deleteCookies)
 	p.GET("/postiz/integrations", s.postizIntegrations)
 	return r
@@ -821,6 +822,15 @@ func (s *Server) uploadCookies(c *gin.Context) {
 		bad(c, "expected a Netscape-format cookies.txt")
 		return
 	}
+	rep := ytdlp.InspectCookies(data)
+	if rep.YouTube == 0 {
+		bad(c, "this file has no youtube.com cookies — export it while on youtube.com")
+		return
+	}
+	warning := ""
+	if !rep.LoggedIn {
+		warning = "These cookies look logged-out (no YouTube/Google session cookie). YouTube will likely still block — log in first, then export again."
+	}
 	if err := os.MkdirAll(filepath.Dir(s.Cfg.CookiesFile), 0o755); err != nil {
 		fail(c, err)
 		return
@@ -829,7 +839,24 @@ func (s *Server) uploadCookies(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(200, gin.H{"ok": true})
+	c.JSON(200, gin.H{"ok": true, "youtubeCookies": rep.YouTube, "loggedIn": rep.LoggedIn, "warning": warning})
+}
+
+// YouTubeTestURL is a stable public video used to check YouTube access.
+var YouTubeTestURL = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+// youtubeTest runs a metadata probe with the current cookies/PO-token setup.
+func (s *Server) youtubeTest(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
+	defer cancel()
+	_, cookieErr := os.Stat(s.Cfg.CookiesFile)
+	cookiesUsed := s.Cfg.CookiesFile != "" && cookieErr == nil
+	info, err := s.YtDlp.Probe(ctx, YouTubeTestURL, "")
+	if err != nil {
+		c.JSON(200, gin.H{"ok": false, "cookiesUsed": cookiesUsed, "error": ytdlp.FriendlyError(err)})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true, "cookiesUsed": cookiesUsed, "title": info.Title})
 }
 
 func (s *Server) deleteCookies(c *gin.Context) {

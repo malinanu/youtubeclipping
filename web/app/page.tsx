@@ -6,7 +6,7 @@ import { Link2, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { Shell, ProgressBar, StatusBadge } from "@/components/Shell";
 import { api, type Video } from "@/lib/api";
 import { useServerEvents } from "@/lib/events";
-import { fmtTime } from "@/lib/util";
+import { fmtTime, needsCookies } from "@/lib/util";
 
 export default function Home() {
   const [videos, setVideos] = useState<Video[] | null>(null);
@@ -115,6 +115,11 @@ function VideoCard({ v, onChange }: { v: Video; onChange: () => void }) {
             <button className="btn-ghost" onClick={() => api.retryVideo(v.id).then(onChange)}>
               <RotateCcw size={14} /> Retry
             </button>
+          )}
+          {v.status === "failed" && needsCookies(v.error) && (
+            <Link href="/settings#youtube" className="btn-ghost text-amber-300">
+              Fix cookies
+            </Link>
           )}
           <button
             className="btn-ghost ml-auto text-red-300"

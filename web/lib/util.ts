@@ -18,6 +18,11 @@ export function parseTime(s: string): number {
   return Math.round(sec * 1000);
 }
 
+/** True when an error needs fresh YouTube cookies (bot check / private video). */
+export function needsCookies(err: string): boolean {
+  return /cookies|not a bot|Sign in to confirm/i.test(err);
+}
+
 export function cn(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
 }

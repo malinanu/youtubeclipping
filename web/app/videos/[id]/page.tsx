@@ -9,7 +9,7 @@ import { TranscriptPanel } from "@/components/editor/TranscriptPanel";
 import { ClipPanel, mergeOverrides } from "@/components/editor/ClipPanel";
 import { api, type CaptionStyle, type Clip, type Transcript, type Video } from "@/lib/api";
 import { useServerEvents } from "@/lib/events";
-import { cn, fmtTime } from "@/lib/util";
+import { cn, fmtTime, needsCookies } from "@/lib/util";
 
 export default function VideoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -162,7 +162,16 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
           <p className="text-xs text-muted">You can start scrubbing as soon as the preview finishes downloading. Long VODs take a while to transcribe on CPU.</p>
         </div>
       )}
-      {video.status === "failed" && <div className="card mb-4 whitespace-pre-wrap p-4 text-sm text-red-300">{video.error}</div>}
+      {video.status === "failed" && (
+        <div className="card mb-4 space-y-2 p-4 text-sm text-red-300">
+          <p className="whitespace-pre-wrap">{video.error}</p>
+          {needsCookies(video.error) && (
+            <a href="/settings#youtube" className="btn-ghost inline-flex text-amber-300">
+              Open Settings → YouTube access
+            </a>
+          )}
+        </div>
+      )}
       {error && <p className="mb-3 text-sm text-red-400">{error}</p>}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_440px]">

@@ -177,8 +177,9 @@ export const api = {
   uploadCookies: (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-    return request("POST", "/settings/cookies", fd);
+    return request<{ ok: boolean; youtubeCookies: number; loggedIn: boolean; warning?: string }>("POST", "/settings/cookies", fd);
   },
+  youtubeTest: () => request<{ ok: boolean; cookiesUsed: boolean; title?: string; error?: string }>("POST", "/settings/youtube-test"),
   deleteCookies: () => request("DELETE", "/settings/cookies"),
 
   integrations: () => request<{ configured: boolean; integrations: Integration[] }>("GET", "/postiz/integrations"),

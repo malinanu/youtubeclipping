@@ -78,25 +78,24 @@ func (h *Handlers) videoProgress(ctx context.Context, id, status, stage string, 
 }
 
 func (h *Handlers) failVideo(ctx context.Context, id string, err error) error {
-	if lastAttempt(ctx) {
+	permanent := ytdlp.IsPermanent(err)
+	if permanent || lastAttempt(ctx) {
 		h.videoStatus(context.WithoutCancel(ctx), id, "failed", "", 0, friendlyError(err))
+	}
+	return retryable(err)
+}
+
+// retryable wraps permanent fetch errors (bot checks, private/removed videos)
+// with asynq.SkipRetry: retrying them only delays the error for the user.
+func retryable(err error) error {
+	if ytdlp.IsPermanent(err) {
+		return fmt.Errorf("%w: %v", asynq.SkipRetry, err)
 	}
 	return err
 }
 
 // friendlyError maps common yt-dlp failures to actionable messages.
-func friendlyError(err error) string {
-	s := err.Error()
-	switch {
-	case strings.Contains(s, "Sign in to confirm") || strings.Contains(s, "not a bot"):
-		return "YouTube is blocking this server's IP (bot check). Upload a cookies.txt in Settings or configure a proxy. Details: " + trim(s, 300)
-	case strings.Contains(s, "Private video") || strings.Contains(s, "members-only"):
-		return "This video is private or members-only. Upload cookies for an account with access. " + trim(s, 200)
-	case strings.Contains(s, "HTTP Error 403"):
-		return "The platform refused the download (403). Update yt-dlp or provide cookies. " + trim(s, 300)
-	}
-	return trim(s, 1500)
-}
+func friendlyError(err error) string { return ytdlp.FriendlyError(err) }
 
 func trim(s string, n int) string {
 	if len(s) > n {
@@ -378,10 +377,11 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 	fail := func(err error) error {
-		if lastAttempt(ctx) {
+		permanent := ytdlp.IsPermanent(err)
+		if permanent || lastAttempt(ctx) {
 			h.clipStatus(context.WithoutCancel(ctx), c, "failed", 0, friendlyError(err), true)
 		}
-		return err
+		return retryable(err)
 	}
 	h.clipStatus(ctx, c, "rendering", 0, "", true)
 

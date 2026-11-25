@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save, Upload } from "lucide-react";
+import { Loader2, PlayCircle, Save, Upload } from "lucide-react";
 import { Shell } from "@/components/Shell";
 import { api, type Settings, type SystemInfo } from "@/lib/api";
 
@@ -14,6 +14,8 @@ export default function SettingsPage() {
   const [sys, setSys] = useState<SystemInfo | null>(null);
   const [secrets, setSecrets] = useState<Record<SecretKey, string>>({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "", geminiApiKey: "" });
   const [msg, setMsg] = useState("");
+  const [cookieWarn, setCookieWarn] = useState("");
+  const [ytTest, setYtTest] = useState<null | "running" | { ok: boolean; cookiesUsed: boolean; title?: string; error?: string }>(null);
 
   useEffect(() => {
     api.settings().then(setS);
@@ -166,12 +168,21 @@ export default function SettingsPage() {
           <span className="text-sm text-muted">{msg}</span>
         </div>
 
-        <Section title="YouTube access (cookies)">
-          <p className="mb-3 text-sm text-muted">
-            Cloud IPs are often challenged by YouTube (&quot;Sign in to confirm you&apos;re not a bot&quot;). Export cookies.txt (Netscape format) from a logged-in browser
-            session with a throwaway account and upload it here. Status: <b>{sys?.cookiesSet ? "uploaded" : "not set"}</b> · yt-dlp {sys?.ytdlpVersion}
+        <Section title="YouTube access (cookies)" id="youtube">
+          <p className="mb-2 text-sm text-muted">
+            YouTube often blocks cloud servers (&quot;Sign in to confirm you&apos;re not a bot&quot;). Give ClipForge cookies from a logged-in browser. Status:{" "}
+            <b>{sys?.cookiesSet ? "uploaded" : "not set"}</b> · yt-dlp {sys?.ytdlpVersion}
           </p>
-          <div className="flex gap-2">
+          <ol className="mb-3 list-decimal space-y-0.5 pl-5 text-xs text-muted">
+            <li>Open a <b>private/incognito</b> window and log in to YouTube with a <b>throwaway</b> Google account.</li>
+            <li>In that same window, open youtube.com and export cookies with the &quot;Get cookies.txt LOCALLY&quot; extension (allow it in incognito).</li>
+            <li>
+              <b>Close the private window</b> right away. Browsing on in it makes YouTube rotate the cookies and the export stops working.
+            </li>
+            <li>Upload the file here, then click <b>Test YouTube access</b>.</li>
+          </ol>
+          {cookieWarn && <p className="mb-2 rounded bg-amber-950/40 p-2 text-xs text-amber-300">{cookieWarn}</p>}
+          <div className="flex flex-wrap gap-2">
             <label className="btn-ghost cursor-pointer">
               <Upload size={14} /> Upload cookies.txt
               <input
@@ -181,31 +192,53 @@ export default function SettingsPage() {
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
                   if (!f) return;
+                  setYtTest(null);
                   try {
-                    await api.uploadCookies(f);
+                    const r = await api.uploadCookies(f);
+                    setCookieWarn(r.warning || "");
                     setSys(await api.system());
-                    setMsg("Cookies uploaded");
+                    setMsg(`Cookies uploaded (${r.youtubeCookies} YouTube cookies${r.loggedIn ? ", logged in" : ""})`);
                   } catch (err) {
-                    setMsg((err as Error).message);
+                    setCookieWarn((err as Error).message);
                   }
+                  e.target.value = "";
                 }}
               />
             </label>
             {sys?.cookiesSet && (
-              <button className="btn-danger" onClick={async () => (await api.deleteCookies(), setSys(await api.system()))}>
+              <button className="btn-danger" onClick={async () => (await api.deleteCookies(), setSys(await api.system()), setYtTest(null))}>
                 Remove
               </button>
             )}
+            <button
+              className="btn-ghost"
+              disabled={ytTest === "running"}
+              onClick={async () => {
+                setYtTest("running");
+                try {
+                  setYtTest(await api.youtubeTest());
+                } catch (err) {
+                  setYtTest({ ok: false, cookiesUsed: false, error: (err as Error).message });
+                }
+              }}
+            >
+              {ytTest === "running" ? <Loader2 size={14} className="animate-spin" /> : <PlayCircle size={14} />} Test YouTube access
+            </button>
           </div>
+          {ytTest && ytTest !== "running" && (
+            <p className={ytTest.ok ? "mt-2 text-sm text-emerald-300" : "mt-2 whitespace-pre-wrap text-sm text-red-300"}>
+              {ytTest.ok ? `✅ Works — fetched “${ytTest.title}”${ytTest.cookiesUsed ? " using your cookies" : " (no cookies needed)"}.` : `❌ ${ytTest.error}`}
+            </p>
+          )}
         </Section>
       </div>
     </Shell>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, children, id }: { title: string; children: React.ReactNode; id?: string }) {
   return (
-    <section className="card p-5">
+    <section className="card scroll-mt-20 p-5" id={id}>
       <h2 className="mb-4 font-semibold">{title}</h2>
       {children}
     </section>
