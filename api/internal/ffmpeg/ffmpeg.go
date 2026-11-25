@@ -183,6 +183,8 @@ type ProbeResult struct {
 	Height      int
 	HasAudio    bool
 	VideoCodec  string
+	AudioCodec  string
+	FormatName  string // e.g. "mov,mp4,m4a,3gp,3g2,mj2" or "matroska,webm"
 }
 
 func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
@@ -193,7 +195,8 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 	}
 	var pr struct {
 		Format struct {
-			Duration string `json:"duration"`
+			Duration   string `json:"duration"`
+			FormatName string `json:"format_name"`
 		} `json:"format"`
 		Streams []struct {
 			CodecType string `json:"codec_type"`
@@ -207,6 +210,7 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 	}
 	res := &ProbeResult{}
 	res.DurationSec, _ = strconv.ParseFloat(pr.Format.Duration, 64)
+	res.FormatName = pr.Format.FormatName
 	for _, s := range pr.Streams {
 		switch s.CodecType {
 		case "video":
@@ -214,6 +218,9 @@ func (r *Runner) Probe(ctx context.Context, path string) (*ProbeResult, error) {
 				res.Width, res.Height, res.VideoCodec = s.Width, s.Height, s.CodecName
 			}
 		case "audio":
+			if !res.HasAudio {
+				res.AudioCodec = s.CodecName
+			}
 			res.HasAudio = true
 		}
 	}

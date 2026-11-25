@@ -122,6 +122,12 @@ func (h *Handlers) Ingest(ctx context.Context, t *asynq.Task) error {
 	if err := h.Layout.Ensure(dir, h.Layout.TmpDir()); err != nil {
 		return err
 	}
+	if v.Platform == "upload" {
+		if v.Status == "uploading" {
+			return nil // not finished uploading; /complete enqueues ingest
+		}
+		return h.ingestUpload(ctx, v)
+	}
 
 	h.videoStatus(ctx, v.ID, "downloading", "metadata", 0, "")
 	info, err := h.YtDlp.Probe(ctx, v.SourceURL, "")
@@ -432,6 +438,19 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		return func(f float64) { h.clipStatus(ctx, c, "rendering", float32(base+f*span), "", false) }
 	}
 
+	// 0) Uploaded files: render straight from the local source.
+	if v.Platform == "upload" {
+		src, err := h.uploadSource(v)
+		if err != nil {
+			return fail(fmt.Errorf("%w: %v", asynq.SkipRetry, err))
+		}
+		opts.Inputs = []ffmpeg.Input{{Path: src}}
+		if err := h.FF.Render(ctx, opts, progress(0, 0.95)); err != nil {
+			return fail(err)
+		}
+		return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
+	}
+
 	// 1) Stream directly from the platform with an accurate seek (single encode).
 	streams, _, rerr := h.YtDlp.ResolveStreams(ctx, v.SourceURL)
 	if rerr == nil {
@@ -455,28 +474,7 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		}
 	}
 
-	finalMP4 := filepath.Join(outDir, "clip.mp4")
-	if err := moveFile(tmpOut, finalMP4); err != nil {
-		return fail(err)
-	}
-	srtPath := filepath.Join(outDir, "clip.srt")
-	if err := os.WriteFile(srtPath, []byte(captions.BuildSRT(words)), 0o644); err != nil {
-		return fail(err)
-	}
-	thumb := filepath.Join(outDir, "thumb.jpg")
-	if err := h.FF.Thumbnail(ctx, finalMP4, thumb, min(1.0, durSec/2)); err != nil {
-		h.Log.Warn("thumbnail", "err", err)
-		thumb = ""
-	}
-	relThumb := ""
-	if thumb != "" {
-		relThumb = h.Layout.Rel(thumb)
-	}
-	if err := h.Store.SetClipOutputs(ctx, c.ID, h.Layout.Rel(finalMP4), h.Layout.Rel(srtPath), relThumb); err != nil {
-		return err
-	}
-	h.clipStatus(ctx, c, "done", 1, "", true)
-	return nil
+	return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
 }
 
 // moveFile renames, falling back to copy across filesystems.
@@ -558,12 +556,24 @@ func (h *Handlers) Cleanup(ctx context.Context, _ *asynq.Task) error {
 			return err
 		}
 		for _, id := range ids {
+			if v, err := h.Store.GetVideo(ctx, id); err == nil && v.Platform == "upload" {
+				h.purgeUploadDerived(ctx, v)
+				continue
+			}
 			if err := os.RemoveAll(h.Layout.VideoDir(id)); err != nil {
 				h.Log.Warn("cleanup", "video", id, "err", err)
 				continue
 			}
 			_ = h.Store.SetVideoPaths(ctx, id, "", "")
 			h.Log.Info("purged source media", "video", id)
+		}
+	}
+	// Uploads abandoned mid-way for a day are removed entirely.
+	if stale, err := h.Store.StaleUploads(ctx, time.Now().Add(-24*time.Hour)); err == nil {
+		for _, id := range stale {
+			_ = os.RemoveAll(h.Layout.VideoDir(id))
+			_ = h.Store.DeleteVideo(ctx, id)
+			h.Log.Info("removed abandoned upload", "video", id)
 		}
 	}
 	entries, _ := os.ReadDir(h.Layout.TmpDir())
@@ -602,4 +612,51 @@ func (h *Handlers) PreloadModel(ctx context.Context) {
 		return
 	}
 	h.Log.Info("whisper model ready", "model", eff.WhisperModel)
+}
+
+// finishRender moves the encode into place and writes the SRT and thumbnail.
+func (h *Handlers) finishRender(ctx context.Context, c *store.Clip, tmpOut, outDir string, words []media.Word,
+	durSec float64, fail func(error) error) error {
+	finalMP4 := filepath.Join(outDir, "clip.mp4")
+	if err := moveFile(tmpOut, finalMP4); err != nil {
+		return fail(err)
+	}
+	srtPath := filepath.Join(outDir, "clip.srt")
+	if err := os.WriteFile(srtPath, []byte(captions.BuildSRT(words)), 0o644); err != nil {
+		return fail(err)
+	}
+	thumb := filepath.Join(outDir, "thumb.jpg")
+	if err := h.FF.Thumbnail(ctx, finalMP4, thumb, min(1.0, durSec/2)); err != nil {
+		h.Log.Warn("thumbnail", "err", err)
+		thumb = ""
+	}
+	relThumb := ""
+	if thumb != "" {
+		relThumb = h.Layout.Rel(thumb)
+	}
+	if err := h.Store.SetClipOutputs(ctx, c.ID, h.Layout.Rel(finalMP4), h.Layout.Rel(srtPath), relThumb); err != nil {
+		return err
+	}
+	h.clipStatus(ctx, c, "done", 1, "", true)
+	return nil
+}
+
+// purgeUploadDerived frees the transcription audio (and a transcoded preview)
+// of an old upload but keeps the original, which renders still need.
+func (h *Handlers) purgeUploadDerived(ctx context.Context, v *store.Video) {
+	if v.AudioPath == "" {
+		return
+	}
+	if p, ok := h.Layout.Abs(v.AudioPath); ok {
+		_ = os.Remove(p)
+	}
+	proxy := v.ProxyPath
+	if proxy != "" && proxy != v.SourcePath() {
+		if p, ok := h.Layout.Abs(proxy); ok {
+			_ = os.Remove(p)
+		}
+		proxy = ""
+	}
+	_ = h.Store.SetVideoPaths(ctx, v.ID, proxy, "")
+	h.Log.Info("purged upload audio/preview, kept original", "video", v.ID)
 }

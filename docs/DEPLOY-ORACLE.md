@@ -74,7 +74,8 @@ Use the `.en` models for English-only channels. For long Twitch VODs, set an Ope
 proxy_buffering off;
 proxy_read_timeout 3600s;
 proxy_send_timeout 3600s;
-client_max_body_size 10m;
+client_max_body_size 10m;   # uploads are sent in 8 MB chunks
+    proxy_request_buffering off;
 ```
 
 Alternatively, use a **Cloudflare Tunnel** (`cloudflared`) pointing at `http://127.0.0.1:8088`. Then you don't need to open any inbound ports. If you proxy through Cloudflare, keep the SSE endpoint uncached. API responses are already marked `no-cache`.

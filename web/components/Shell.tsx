@@ -68,6 +68,7 @@ export function StatusBadge({ status }: { status: string }) {
     sent: "bg-emerald-500/15 text-emerald-300",
     failed: "bg-red-500/15 text-red-300",
     downloading: "bg-sky-500/15 text-sky-300",
+    uploading: "bg-sky-500/15 text-sky-300",
     transcribing: "bg-violet-500/15 text-violet-300",
     rendering: "bg-amber-500/15 text-amber-300",
     queued: "bg-zinc-500/20 text-zinc-300",

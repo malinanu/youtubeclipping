@@ -51,6 +51,8 @@ type Config struct {
 	FFmpegThreads         int
 	WhisperThreads        int
 	MediaRetentionDays    int
+	MaxUploadGB           int
+	UploadChunkMB         int
 
 	// Integrations (can be overridden by settings table)
 	AIProvider      string // auto|claude|gemini
@@ -102,6 +104,8 @@ func Load() (*Config, error) {
 		FFmpegThreads:         envInt("FFMPEG_THREADS", 0),
 		WhisperThreads:        envInt("WHISPER_THREADS", runtime.NumCPU()),
 		MediaRetentionDays:    envInt("MEDIA_RETENTION_DAYS", 14),
+		MaxUploadGB:           envInt("MAX_UPLOAD_GB", 20),
+		UploadChunkMB:         envInt("UPLOAD_CHUNK_MB", 8), // fits under nginx client_max_body_size 10m
 
 		AIProvider:      strings.ToLower(env("AI_PROVIDER", "auto")),
 		AnthropicAPIKey: env("ANTHROPIC_API_KEY", ""),

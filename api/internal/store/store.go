@@ -508,3 +508,65 @@ func (s *Store) SaveSettings(ctx context.Context, st *Settings) error {
 	_, err := s.DB.Exec(ctx, `UPDATE settings SET data=$1, updated_at=now() WHERE id=1`, raw)
 	return err
 }
+
+// ---------- Uploads ----------
+
+// UploadMeta is stored under videos.meta.upload for platform='upload'.
+type UploadMeta struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	Ext      string `json:"ext"`
+}
+
+// CreateUploadVideo inserts a video in status 'uploading'.
+func (s *Store) CreateUploadVideo(ctx context.Context, title string, um UploadMeta) (*Video, error) {
+	meta, _ := json.Marshal(map[string]any{"upload": um})
+	return scanVideo(s.DB.QueryRow(ctx, `INSERT INTO videos (source_url, platform, title, status, stage, meta)
+		VALUES ($1, 'upload', $2, 'uploading', 'uploading', $3) RETURNING `+videoCols,
+		"upload://"+um.Filename, title, meta))
+}
+
+// UploadInfo returns the upload metadata of an upload video.
+func (v *Video) UploadInfo() (UploadMeta, bool) {
+	var m struct {
+		Upload *UploadMeta `json:"upload"`
+	}
+	if v.Platform != "upload" || json.Unmarshal(v.Meta, &m) != nil || m.Upload == nil {
+		return UploadMeta{}, false
+	}
+	return *m.Upload, true
+}
+
+// SourcePath returns the stored relative path of an uploaded source file.
+func (v *Video) SourcePath() string {
+	var m struct {
+		SourcePath string `json:"sourcePath"`
+	}
+	_ = json.Unmarshal(v.Meta, &m)
+	return m.SourcePath
+}
+
+// MergeVideoMeta shallow-merges keys into videos.meta.
+func (s *Store) MergeVideoMeta(ctx context.Context, id string, patch map[string]any) error {
+	b, _ := json.Marshal(patch)
+	_, err := s.DB.Exec(ctx, `UPDATE videos SET meta = meta || $2::jsonb, updated_at=now() WHERE id=$1`, id, b)
+	return err
+}
+
+// StaleUploads returns uploads that never completed since cutoff.
+func (s *Store) StaleUploads(ctx context.Context, cutoff time.Time) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `SELECT id FROM videos WHERE platform='upload' AND status='uploading' AND updated_at < $1`, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}

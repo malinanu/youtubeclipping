@@ -170,9 +170,13 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
           <div className="mt-1 flex items-center gap-2 text-sm text-muted">
             <StatusBadge status={video.status} />
             <span>{video.channel}</span>·<span>{fmtTime(video.durationMs)}</span>
-            <a href={video.meta?.webpageUrl || video.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-white">
-              source <ExternalLink size={12} />
-            </a>
+            {video.platform === "upload" ? (
+              <span>uploaded file{video.meta?.upload ? ` · ${video.meta.upload.filename}` : ""}</span>
+            ) : (
+              <a href={video.meta?.webpageUrl || video.sourceUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 hover:text-white">
+                source <ExternalLink size={12} />
+              </a>
+            )}
           </div>
         </div>
         {video.status === "ready" && (
@@ -190,11 +194,23 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
       {processing && (
         <div className="card mb-4 space-y-2 p-4">
           <div className="text-sm">
-            {video.status === "downloading" ? "Downloading" : video.status === "transcribing" ? "Transcribing" : "Queued"}
+            {video.status === "uploading"
+              ? "Uploading"
+              : video.status === "downloading"
+                ? video.platform === "upload"
+                  ? "Preparing"
+                  : "Downloading"
+                : video.status === "transcribing"
+                  ? "Transcribing"
+                  : "Queued"}
             {video.stage ? ` · ${video.stage}` : ""} — {Math.round(video.progress * 100)}%
           </div>
           <ProgressBar value={video.progress} />
-          <p className="text-xs text-muted">You can start scrubbing as soon as the preview finishes downloading. Long VODs take a while to transcribe on CPU.</p>
+          <p className="text-xs text-muted">
+            {video.status === "uploading"
+              ? "Keep the upload tab open until it reaches 100%. If it's interrupted, choose the same file again on the home page to resume."
+              : "You can start scrubbing as soon as the preview is ready. Long videos take a while to transcribe on CPU."}
+          </p>
         </div>
       )}
       {video.status === "failed" && (

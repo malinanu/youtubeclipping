@@ -6,21 +6,25 @@ export type Segment = { s: number; e: number; t: string };
 export type Video = {
   id: string;
   sourceUrl: string;
-  platform: "youtube" | "twitch";
+  platform: "youtube" | "twitch" | "upload";
   title: string;
   channel: string;
   durationMs: number;
   width: number;
   height: number;
   thumbnail: string;
-  status: "queued" | "downloading" | "transcribing" | "ready" | "failed";
+  status: "uploading" | "queued" | "downloading" | "transcribing" | "ready" | "failed";
   progress: number;
   stage: string;
   error: string;
   hasProxy: boolean;
   clipCount: number;
   createdAt: string;
-  meta: { chapters?: { start_time: number; end_time: number; title: string }[]; webpageUrl?: string };
+  meta: {
+    chapters?: { start_time: number; end_time: number; title: string }[];
+    webpageUrl?: string;
+    upload?: { filename: string; size: number; ext: string };
+  };
 };
 
 export type Transcript = { videoId: string; language: string; provider: string; words: Word[]; segments: Segment[] };

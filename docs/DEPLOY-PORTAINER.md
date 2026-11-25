@@ -178,7 +178,8 @@ If 18080 or 13000 is already in use on the host, change `API_PORT` and `WEB_PORT
     proxy_cache off;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
-    client_max_body_size 10m;
+    client_max_body_size 10m;   # uploads are sent in 8 MB chunks
+    proxy_request_buffering off;
   }
 ```
 
@@ -199,6 +200,14 @@ There are two ways to add the key:
 2. **In the stack env:** set `GEMINI_API_KEY=…` (and optionally `AI_PROVIDER=gemini`) in Portainer, then **Update the stack**. Values saved in the Settings page override the env.
 
 `AI_PROVIDER=auto` uses Claude when an Anthropic key is set, otherwise Gemini. The Gemini model defaults to `gemini-3.5-flash-lite` (fast and cheap). You can change it in Settings, for example to `gemini-3.8-flash` for higher quality.
+
+## 9b. Uploading video files
+
+Instead of pasting a URL, you can use **Upload file** on the home page. This suits long streams you've downloaded and pre-cut yourself, or videos YouTube won't let the server fetch.
+
+- **Chunked and resumable:** files go up in 8 MB chunks, so the `client_max_body_size 10m` above is enough. If the connection drops, pick the same file again and it resumes where it stopped.
+- **Fast preview:** H.264 MP4/MOV (and VP9 WebM) up to 1080p are used directly as the editor preview, so a 5-hour file is ready to scrub as soon as the audio is extracted. Other formats (HEVC, MKV, …) get a 360p preview transcoded first.
+- **Storage:** uploaded originals are **kept until you delete the video**, because clips are rendered from them. Check disk use with `docker system df -v | grep clipforge_media`. The limit is `MAX_UPLOAD_GB` (default 20). Uploads abandoned mid-way are removed after 24 hours.
 
 ## 10. Updating
 

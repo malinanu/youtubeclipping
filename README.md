@@ -11,6 +11,7 @@ It runs on an Oracle Cloud Ampere (arm64) VM, deployed in one of two ways:
 | Step | What happens |
 |---|---|
 | **Import** | `yt-dlp` reads metadata and downloads a small 360p **editor proxy** only, not the full-quality VOD. ffmpeg extracts 16 kHz audio. |
+| **…or upload** | Drop a video file (MP4, MOV, MKV, WEBM…) on the **Upload file** tab. It's sent in resumable 8 MB chunks; H.264 MP4s are used as the preview directly, so long files are editable within seconds. |
 | **Transcribe** | `whisper.cpp` (local, word timestamps) runs, with an optional OpenAI/Groq API fallback. Long VODs are chunked, with live progress. |
 | **Pick clips** | Click words to seek and drag across the transcript to select. Mark In/Out with `I`/`O`. You can also use **Suggest clips with AI** (Claude or Gemini reads the timestamped transcript and returns scored, non-overlapping clips snapped to word boundaries). |
 | **Edit** | Trim handles, a draggable 9:16 reframe box, the caption style, and per-clip word fixes, all with a live caption preview on the player. |
