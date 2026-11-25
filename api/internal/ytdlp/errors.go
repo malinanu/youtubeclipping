@@ -44,6 +44,8 @@ func FriendlyError(err error) string {
 		return "This video is private or members-only. Upload cookies for an account that can watch it. " + trim(s, 200)
 	case strings.Contains(s, "Video unavailable") || strings.Contains(s, "has been removed") || strings.Contains(s, "no longer available"):
 		return "This video is unavailable (removed, region-locked or wrong link). " + trim(s, 200)
+	case strings.Contains(s, "no downloadable formats from YouTube"):
+		return "YouTube accepted the request but offered no downloadable streams for any player client. Usually the cookies were rotated or flagged: re-export them (incognito steps in Settings → YouTube access), upload, Test, then Retry. If it keeps happening, set YTDLP_PROXY. Details: " + trim(s, 900)
 	case strings.Contains(s, "HTTP Error 403"):
 		return "The platform refused the download (403). Update yt-dlp or upload fresh cookies. " + trim(s, 300)
 	}

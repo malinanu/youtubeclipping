@@ -71,3 +71,65 @@ func TestProbeTimeout(t *testing.T) {
 		t.Fatalf("err=%v after %s", err, time.Since(start))
 	}
 }
+
+// fakeYtDlp writes a script that only succeeds for one player client and
+// logs every invocation's args.
+func fakeYtDlp(t *testing.T, okClient string) (string, string) {
+	dir := t.TempDir()
+	log := dir + "/calls.log"
+	script := "#!/bin/sh\necho \"$@\" >> " + log + "\n" +
+		"case \"$*\" in *player_client=" + okClient + "*) echo '{\"id\":\"x\",\"title\":\"OK\",\"duration\":10}'; exit 0;; esac\n" +
+		"echo 'WARNING: [youtube] x: Some web client https formats have been skipped as they are missing a url' >&2\n" +
+		"echo 'ERROR: [youtube] x: Requested format is not available. Use --list-formats' >&2\nexit 1\n"
+	bin := dir + "/yt-dlp"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, log
+}
+
+func TestPlayerClientFallback(t *testing.T) {
+	bin, log := fakeYtDlp(t, "web_safari")
+	c := &Client{Bin: bin}
+	info, err := c.Probe(context.Background(), "https://www.youtube.com/watch?v=x", "")
+	if err != nil || info.Title != "OK" {
+		t.Fatalf("fallback failed: %v", err)
+	}
+	calls, _ := os.ReadFile(log)
+	if n := strings.Count(string(calls), "\n"); n != 3 { // default, tv, web_safari
+		t.Fatalf("want 3 attempts, got %d:\n%s", n, calls)
+	}
+	if strings.Contains(string(calls), "--no-warnings") {
+		t.Fatal("warnings must not be suppressed")
+	}
+	// The working client is remembered and tried first.
+	_ = os.Remove(log)
+	if _, err := c.Probe(context.Background(), "https://youtu.be/x", ""); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ = os.ReadFile(log)
+	if n := strings.Count(string(calls), "\n"); n != 1 || !strings.Contains(string(calls), "player_client=web_safari") {
+		t.Fatalf("preferred client not reused:\n%s", calls)
+	}
+}
+
+func TestPlayerClientFallbackExhausted(t *testing.T) {
+	bin, _ := fakeYtDlp(t, "nonexistent")
+	_, err := (&Client{Bin: bin}).Probe(context.Background(), "https://www.youtube.com/watch?v=x", "")
+	if err == nil || !strings.Contains(err.Error(), "no downloadable formats from YouTube") ||
+		!strings.Contains(err.Error(), "missing a url") {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if !strings.Contains(FriendlyError(err), "re-export") {
+		t.Fatalf("friendly: %s", FriendlyError(err))
+	}
+}
+
+func TestTwitchSkipsClientFallback(t *testing.T) {
+	bin, log := fakeYtDlp(t, "x")
+	_, _ = (&Client{Bin: bin}).Probe(context.Background(), "https://www.twitch.tv/videos/1", "")
+	calls, _ := os.ReadFile(log)
+	if n := strings.Count(string(calls), "\n"); n != 1 || strings.Contains(string(calls), "player_client") {
+		t.Fatalf("twitch should run once without player_client:\n%s", calls)
+	}
+}

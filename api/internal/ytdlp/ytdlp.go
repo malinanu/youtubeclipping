@@ -14,10 +14,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
+// PlayerClients are YouTube player clients tried in order when the default
+// set yields no downloadable formats (common for logged-in cookies on
+// datacenter IPs). "" means yt-dlp's own default selection.
+var PlayerClients = []string{"", "tv", "web_safari", "mweb", "web_embedded"}
+
 type Client struct {
+	preferred atomic.Value // string: last player client that worked
+
 	Bin         string
 	CookiesFile string
 	Proxy       string
@@ -103,7 +111,8 @@ type Info struct {
 
 func (c *Client) baseArgs() []string {
 	// --socket-timeout stops a stalled connection from hanging a job forever.
-	args := []string{"--no-playlist", "--no-warnings", "--no-progress", "--ignore-config", "--socket-timeout", "30"}
+	// Warnings are kept: they explain *why* formats are missing (PO token, JS challenge).
+	args := []string{"--no-playlist", "--no-progress", "--ignore-config", "--socket-timeout", "30"}
 	if c.CookiesFile != "" {
 		if _, err := os.Stat(c.CookiesFile); err == nil {
 			args = append(args, "--cookies", c.CookiesFile)
@@ -124,9 +133,19 @@ func (c *Client) baseArgs() []string {
 var ProbeTimeout = 3 * time.Minute
 
 func (c *Client) Probe(ctx context.Context, rawURL, format string) (*Info, error) {
+	var info *Info
+	err := c.withClients(rawURL, func(extra []string) error {
+		var err error
+		info, err = c.probeOnce(ctx, rawURL, format, extra)
+		return err
+	})
+	return info, err
+}
+
+func (c *Client) probeOnce(ctx context.Context, rawURL, format string, extra []string) (*Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, ProbeTimeout)
 	defer cancel()
-	args := append(c.baseArgs(), "-J")
+	args := append(append(c.baseArgs(), extra...), "-J")
 	if format != "" {
 		args = append(args, "-f", format)
 	}
@@ -162,7 +181,21 @@ const ProxyFormat = "bv*[height<=480]+ba/b[height<=480]/wv*+ba/w"
 // DownloadProxy downloads a low resolution editor copy to dir/proxy.mp4.
 func (c *Client) DownloadProxy(ctx context.Context, rawURL, dir string, height int, onProgress ProgressFunc) (string, error) {
 	out := filepath.Join(dir, "proxy.%(ext)s")
-	args := append(c.baseArgs(),
+	err := c.withClients(rawURL, func(extra []string) error {
+		return c.run(ctx, c.proxyArgs(rawURL, out, height, extra), onProgress)
+	})
+	if err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, "proxy.mp4")
+	if _, err := os.Stat(p); err != nil {
+		return "", fmt.Errorf("proxy file missing after download: %w", err)
+	}
+	return p, nil
+}
+
+func (c *Client) proxyArgs(rawURL, out string, height int, extra []string) []string {
+	return append(append(c.baseArgs(), extra...),
 		"-f", ProxyFormat,
 		"-S", fmt.Sprintf("res:%d,vcodec:h264,acodec:aac,ext:mp4:m4a", height),
 		"--merge-output-format", "mp4",
@@ -171,17 +204,8 @@ func (c *Client) DownloadProxy(ctx context.Context, rawURL, dir string, height i
 		"-o", out,
 		"--newline",
 		"--progress", "--progress-template", "download:CFPROG %(progress)j",
-		"--", rawURL,
+		"--", rawURL, // --progress overrides --no-progress from baseArgs
 	)
-	// --progress overrides --no-progress from baseArgs.
-	if err := c.run(ctx, args, onProgress); err != nil {
-		return "", err
-	}
-	p := filepath.Join(dir, "proxy.mp4")
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("proxy file missing after download: %w", err)
-	}
-	return p, nil
 }
 
 // SourceFormat picks the best rendition up to 1080p for final renders.
@@ -222,17 +246,19 @@ func (c *Client) ResolveStreams(ctx context.Context, rawURL string) ([]StreamInp
 // starts exactly at startSec.
 func (c *Client) DownloadSection(ctx context.Context, rawURL, dir string, startSec, endSec float64, onProgress ProgressFunc) (string, error) {
 	out := filepath.Join(dir, "section.%(ext)s")
-	args := append(c.baseArgs(),
-		"-f", SourceFormat,
-		"--download-sections", fmt.Sprintf("*%.3f-%.3f", startSec, endSec),
-		"--force-keyframes-at-cuts",
-		"--merge-output-format", "mkv",
-		"-o", out,
-		"--newline",
-		"--progress", "--progress-template", "download:CFPROG %(progress)j",
-		"--", rawURL,
-	)
-	if err := c.run(ctx, args, onProgress); err != nil {
+	err := c.withClients(rawURL, func(extra []string) error {
+		return c.run(ctx, append(append(c.baseArgs(), extra...),
+			"-f", SourceFormat,
+			"--download-sections", fmt.Sprintf("*%.3f-%.3f", startSec, endSec),
+			"--force-keyframes-at-cuts",
+			"--merge-output-format", "mkv",
+			"-o", out,
+			"--newline",
+			"--progress", "--progress-template", "download:CFPROG %(progress)j",
+			"--", rawURL,
+		), onProgress)
+	})
+	if err != nil {
 		return "", err
 	}
 	matches, _ := filepath.Glob(filepath.Join(dir, "section.*"))
@@ -386,4 +412,65 @@ func tail(s string, n int) string {
 		return "…" + s[len(s)-n:]
 	}
 	return s
+}
+
+// formatsMissing reports errors where YouTube answered but offered no usable
+// streams for the chosen player client, so another client may work.
+func formatsMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "Requested format is not available") ||
+		strings.Contains(s, "No video formats found") ||
+		strings.Contains(s, "Only images are available")
+}
+
+func isYouTube(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return strings.HasSuffix(h, "youtube.com") || h == "youtu.be" || strings.HasSuffix(h, "youtube-nocookie.com")
+}
+
+// withClients runs fn with each YouTube player client until one yields
+// formats. The client that works is remembered and tried first next time.
+func (c *Client) withClients(rawURL string, fn func(extra []string) error) error {
+	if !isYouTube(rawURL) {
+		return fn(nil)
+	}
+	order := make([]string, 0, len(PlayerClients))
+	if p, ok := c.preferred.Load().(string); ok {
+		order = append(order, p)
+	}
+	for _, pc := range PlayerClients {
+		if len(order) == 0 || pc != order[0] {
+			order = append(order, pc)
+		}
+	}
+	var lastErr error
+	tried := []string{}
+	for _, pc := range order {
+		var extra []string
+		if pc != "" {
+			extra = []string{"--extractor-args", "youtube:player_client=" + pc}
+		}
+		err := fn(extra)
+		if err == nil {
+			c.preferred.Store(pc)
+			return nil
+		}
+		if !formatsMissing(err) {
+			return err
+		}
+		name := pc
+		if name == "" {
+			name = "default"
+		}
+		tried = append(tried, name)
+		lastErr = err
+	}
+	return fmt.Errorf("no downloadable formats from YouTube with any player client (%s): %w", strings.Join(tried, ", "), lastErr)
 }
