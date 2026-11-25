@@ -18,6 +18,8 @@ type Runner struct {
 	FFmpeg  string
 	FFprobe string
 	Threads int
+	// Gate, if set, is held during heavy encodes (render, preview transcode).
+	Gate func(ctx context.Context) (release func(), err error)
 }
 
 // Input is a media source: a local path or a remote URL with headers.
@@ -251,6 +253,13 @@ func (r *Runner) run(ctx context.Context, args ...string) error {
 }
 
 func (r *Runner) runProgress(ctx context.Context, args []string, durSec float64, onProgress func(float64)) error {
+	if r.Gate != nil {
+		release, err := r.Gate(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	cmd := exec.CommandContext(ctx, r.FFmpeg, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

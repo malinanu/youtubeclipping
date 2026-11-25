@@ -16,8 +16,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/malinanu/youtubeclipping/api/internal/ffmpeg"
@@ -44,14 +46,28 @@ type Local struct {
 	Language  string // "auto" or ISO code
 	Threads   int
 	ChunkSec  int
-	FF        *ffmpeg.Runner
-	TmpDir    string
+	BeamSize  int // 1 = greedy (fast, low memory); whisper.cpp CLI default is 5
+	BestOf    int
+	// MaxContext is passed as -mc (0 avoids repetition loops); <0 keeps whisper's default.
+	MaxContext int
+	FF         *ffmpeg.Runner
+	TmpDir     string
+	// WorkDir, if set, persists chunk WAVs and per-chunk results so a killed or
+	// restarted transcription resumes instead of starting over.
+	WorkDir string
+	// Gate, if set, is held while whisper.cpp runs (limits heavy jobs at once).
+	Gate func(ctx context.Context) (release func(), err error)
 }
 
 func (l *Local) Name() string { return "whisper.cpp:" + l.Model }
 
 // ErrConfig marks misconfiguration that retries cannot fix.
 var ErrConfig = errors.New("transcription misconfigured")
+
+// ErrKilled means the OS killed whisper.cpp (almost always out of memory).
+var ErrKilled = errors.New("whisper.cpp was killed by the system — almost always out of memory. " +
+	"Free RAM (stop other heavy apps), add swap, pick a smaller model (base or small.en), " +
+	"or lower WHISPER_THREADS. Progress is saved; Retry resumes where it stopped")
 
 func (l *Local) modelPath() (string, error) {
 	if p, ok := FindModel(l.ModelsDir, l.Model); ok {
@@ -62,69 +78,96 @@ func (l *Local) modelPath() (string, error) {
 
 var progressRe = regexp.MustCompile(`progress\s*=\s*(\d+)%`)
 
+// workMarker identifies what a persisted work dir was produced with.
+type workMarker struct {
+	Model    string `json:"model"`
+	Language string `json:"language"`
+	ChunkSec int    `json:"chunkSec"`
+	Beam     int    `json:"beam"`
+	MaxCtx   int    `json:"maxCtx"`
+}
+
+// prepareWorkDir returns the directory for chunk files, resetting it when it
+// was produced with different settings.
+func (l *Local) prepareWorkDir(chunkSec int) (dir string, cleanup func(), err error) {
+	if l.WorkDir == "" {
+		d, err := os.MkdirTemp(l.TmpDir, "whisper-")
+		return d, func() { _ = os.RemoveAll(d) }, err
+	}
+	want := workMarker{Model: l.Model, Language: l.Language, ChunkSec: chunkSec, Beam: l.beam(), MaxCtx: l.MaxContext}
+	markerPath := filepath.Join(l.WorkDir, "marker.json")
+	var have workMarker
+	if b, err := os.ReadFile(markerPath); err != nil || json.Unmarshal(b, &have) != nil || have != want {
+		_ = os.RemoveAll(l.WorkDir)
+	}
+	if err := os.MkdirAll(l.WorkDir, 0o755); err != nil {
+		return "", nil, err
+	}
+	b, _ := json.Marshal(want)
+	if err := os.WriteFile(markerPath, b, 0o644); err != nil {
+		return "", nil, err
+	}
+	return l.WorkDir, func() {}, nil // caller removes WorkDir after success
+}
+
+func (l *Local) beam() int {
+	if l.BeamSize <= 0 {
+		return 1
+	}
+	return l.BeamSize
+}
+
+func (l *Local) bestOf() int {
+	if l.BestOf <= 0 {
+		return 1
+	}
+	return l.BestOf
+}
+
 func (l *Local) Transcribe(ctx context.Context, wavPath string, durSec float64, onProgress func(float64)) (*Result, error) {
 	model, err := l.modelPath()
 	if err != nil {
 		return nil, err
 	}
-	work, err := os.MkdirTemp(l.TmpDir, "whisper-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(work)
-
 	chunkSec := l.ChunkSec
 	if chunkSec <= 0 {
 		chunkSec = 600
 	}
+	work, cleanup, err := l.prepareWorkDir(chunkSec)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
 	chunks := []string{wavPath}
 	if durSec > float64(chunkSec)*1.2 {
-		if chunks, err = l.FF.SplitWAV(ctx, wavPath, work, chunkSec); err != nil {
-			return nil, err
+		chunks, _ = filepath.Glob(filepath.Join(work, "chunk_*.wav"))
+		if len(chunks) == 0 || !fileExists(filepath.Join(work, "split.done")) {
+			if chunks, err = l.FF.SplitWAV(ctx, wavPath, work, chunkSec); err != nil {
+				return nil, err
+			}
+			_ = os.WriteFile(filepath.Join(work, "split.done"), nil, 0o644)
 		}
+		sort.Strings(chunks)
 	}
 
 	res := &Result{Provider: l.Name()}
 	for i, chunk := range chunks {
 		offset := int64(i * chunkSec * 1000)
 		base := filepath.Join(work, fmt.Sprintf("out_%04d", i))
-		lang := l.Language
-		if lang == "" {
-			lang = "auto"
-		}
-		if i > 0 && res.Language != "" && lang == "auto" {
-			lang = res.Language // keep detection stable across chunks
-		}
-		args := []string{"-m", model, "-f", chunk, "-l", lang, "-t", strconv.Itoa(max(l.Threads, 1)),
-			"-ml", "1", "-sow", "-oj", "-of", base, "-pp"}
-		cmd := exec.CommandContext(ctx, l.Bin, args...)
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return nil, err
-		}
-		var errBuf bytes.Buffer
-		if err := cmd.Start(); err != nil {
-			return nil, fmt.Errorf("start whisper: %w", err)
-		}
-		sc := bufio.NewScanner(stderr)
-		for sc.Scan() {
-			line := sc.Text()
-			if m := progressRe.FindStringSubmatch(line); m != nil && onProgress != nil {
-				p, _ := strconv.Atoi(m[1])
-				onProgress((float64(i) + float64(p)/100) / float64(len(chunks)))
-			} else if errBuf.Len() < 64*1024 {
-				errBuf.WriteString(line + "\n")
+		final := base + ".json"
+
+		raw, err := os.ReadFile(final)
+		if err != nil { // not done yet (or never started): run whisper for this chunk
+			if raw, err = l.runChunk(ctx, model, chunk, base, i, len(chunks), res.Language, onProgress); err != nil {
+				return nil, err
 			}
-		}
-		if err := cmd.Wait(); err != nil {
-			return nil, fmt.Errorf("whisper.cpp: %w: %s", err, tailStr(errBuf.String(), 1000))
-		}
-		raw, err := os.ReadFile(base + ".json")
-		if err != nil {
-			return nil, err
+		} else if onProgress != nil {
+			onProgress(float64(i+1) / float64(len(chunks))) // resumed from a previous run
 		}
 		lang2, words, err := ParseCppJSON(raw, offset)
 		if err != nil {
+			_ = os.Remove(final) // corrupt: redo next time
 			return nil, err
 		}
 		if res.Language == "" {
@@ -132,7 +175,79 @@ func (l *Local) Transcribe(ctx context.Context, wavPath string, durSec float64, 
 		}
 		res.Words = append(res.Words, words...)
 	}
+	res.Words = media.CollapseRepeats(res.Words)
 	return res, nil
+}
+
+// runChunk transcribes one chunk and atomically writes <base>.json.
+func (l *Local) runChunk(ctx context.Context, model, chunk, base string, i, n int, detected string,
+	onProgress func(float64)) ([]byte, error) {
+	if l.Gate != nil {
+		release, err := l.Gate(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+	lang := l.Language
+	if lang == "" {
+		lang = "auto"
+	}
+	if lang == "auto" && detected != "" {
+		lang = detected // keep detection stable across chunks
+	}
+	tmpBase := base + ".tmp"
+	args := []string{"-m", model, "-f", chunk, "-l", lang, "-t", strconv.Itoa(max(l.Threads, 1)),
+		"-bs", strconv.Itoa(l.beam()), "-bo", strconv.Itoa(l.bestOf()),
+		"-ml", "1", "-sow", "-oj", "-of", tmpBase, "-pp"}
+	if l.MaxContext >= 0 {
+		args = append(args, "-mc", strconv.Itoa(l.MaxContext))
+	}
+	cmd := exec.CommandContext(ctx, l.Bin, args...)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	var errBuf bytes.Buffer
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start whisper: %w", err)
+	}
+	sc := bufio.NewScanner(stderr)
+	for sc.Scan() {
+		line := sc.Text()
+		if m := progressRe.FindStringSubmatch(line); m != nil && onProgress != nil {
+			p, _ := strconv.Atoi(m[1])
+			onProgress((float64(i) + float64(p)/100) / float64(n))
+		} else if errBuf.Len() < 64*1024 {
+			errBuf.WriteString(line + "\n")
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		_ = os.Remove(tmpBase + ".json")
+		if ctx.Err() != nil {
+			return nil, ctx.Err() // cancelled/restarted: retry resumes from this chunk
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGKILL {
+				return nil, fmt.Errorf("%w (chunk %d of %d)", ErrKilled, i+1, n)
+			}
+		}
+		return nil, fmt.Errorf("whisper.cpp: %w: %s", err, tailStr(errBuf.String(), 1000))
+	}
+	raw, err := os.ReadFile(tmpBase + ".json")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmpBase+".json", base+".json"); err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 type cppOut struct {

@@ -50,6 +50,11 @@ type Config struct {
 	IngestConcurrency     int
 	FFmpegThreads         int
 	WhisperThreads        int
+	WhisperBeamSize       int
+	WhisperBestOf         int
+	WhisperMaxContext     int
+	WhisperChunkSec       int
+	HeavyJobs             int
 	MediaRetentionDays    int
 	MaxUploadGB           int
 	UploadChunkMB         int
@@ -103,6 +108,11 @@ func Load() (*Config, error) {
 		IngestConcurrency:     envInt("INGEST_CONCURRENCY", 2),
 		FFmpegThreads:         envInt("FFMPEG_THREADS", 0),
 		WhisperThreads:        envInt("WHISPER_THREADS", runtime.NumCPU()),
+		WhisperBeamSize:       envInt("WHISPER_BEAM_SIZE", 1), // greedy: ~2-3x faster, less RAM
+		WhisperBestOf:         envInt("WHISPER_BEST_OF", 1),
+		WhisperMaxContext:     envInt("WHISPER_MAX_CONTEXT", 0), // 0 = don't feed prior text back: prevents repetition loops; -1 = whisper default
+		WhisperChunkSec:       envInt("WHISPER_CHUNK_SEC", 600),
+		HeavyJobs:             envInt("HEAVY_JOBS", 1), // whisper/ffmpeg encodes at once
 		MediaRetentionDays:    envInt("MEDIA_RETENTION_DAYS", 14),
 		MaxUploadGB:           envInt("MAX_UPLOAD_GB", 20),
 		UploadChunkMB:         envInt("UPLOAD_CHUNK_MB", 8), // fits under nginx client_max_body_size 10m

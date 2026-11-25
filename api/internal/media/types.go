@@ -129,3 +129,44 @@ func (l Layout) Abs(rel string) (string, bool) {
 	}
 	return p, true
 }
+
+// CollapseRepeats removes whisper "repetition loops": when the same phrase of
+// 2–15 words occurs 4+ times back to back, only the first occurrence is kept.
+// Ordinary emphasis ("no, no, no") repeats fewer times and is left alone.
+func CollapseRepeats(words []Word) []Word {
+	const minReps = 4
+	norm := func(s string) string {
+		return strings.ToLower(strings.Trim(s, ".,!?;:\"'"))
+	}
+	out := make([]Word, 0, len(words))
+	for i := 0; i < len(words); {
+		collapsed := false
+		for n := 2; n <= 15 && i+n*minReps <= len(words); n++ {
+			reps := 1
+			for j := i + n; j+n <= len(words); j += n {
+				same := true
+				for k := 0; k < n; k++ {
+					if norm(words[i+k].Text) != norm(words[j+k].Text) {
+						same = false
+						break
+					}
+				}
+				if !same {
+					break
+				}
+				reps++
+			}
+			if reps >= minReps {
+				out = append(out, words[i:i+n]...)
+				i += n * reps
+				collapsed = true
+				break
+			}
+		}
+		if !collapsed {
+			out = append(out, words[i])
+			i++
+		}
+	}
+	return out
+}

@@ -36,6 +36,8 @@ type Handlers struct {
 	FF     *ffmpeg.Runner
 	Layout media.Layout
 	Log    *slog.Logger
+	// Gate limits heavy CPU/RAM jobs (whisper.cpp, encodes) running at once.
+	Gate func(ctx context.Context) (release func(), err error)
 }
 
 func (h *Handlers) Register(mux *asynq.ServeMux) {
@@ -198,10 +200,13 @@ func (h *Handlers) Ingest(ctx context.Context, t *asynq.Task) error {
 
 // ---------- transcribe ----------
 
-func (h *Handlers) provider(eff Effective, durMin float64) whisper.Provider {
+func (h *Handlers) provider(eff Effective, durMin float64, videoID string) whisper.Provider {
 	tmp := h.Layout.TmpDir()
 	local := &whisper.Local{Bin: h.Cfg.WhisperBin, ModelsDir: h.Cfg.WhisperModels, Model: eff.WhisperModel,
-		Language: eff.WhisperLanguage, Threads: h.Cfg.WhisperThreads, FF: h.FF, TmpDir: tmp}
+		Language: eff.WhisperLanguage, Threads: h.Cfg.WhisperThreads, FF: h.FF, TmpDir: tmp,
+		BeamSize: h.Cfg.WhisperBeamSize, BestOf: h.Cfg.WhisperBestOf, ChunkSec: h.Cfg.WhisperChunkSec,
+		MaxContext: h.Cfg.WhisperMaxContext,
+		WorkDir:    h.whisperWorkDir(videoID), Gate: h.Gate}
 	api := func(name string) whisper.Provider {
 		switch name {
 		case "openai":
@@ -261,7 +266,7 @@ func (h *Handlers) Transcribe(ctx context.Context, t *asynq.Task) error {
 			return h.failVideo(ctx, v.ID, err)
 		}
 	}
-	prov := h.provider(eff, float64(v.DurationMs)/60000)
+	prov := h.provider(eff, float64(v.DurationMs)/60000, v.ID)
 	h.videoStatus(ctx, v.ID, "transcribing", prov.Name(), 0, "")
 	res, err := prov.Transcribe(ctx, wav, float64(v.DurationMs)/1000, func(f float64) {
 		h.videoProgress(ctx, v.ID, "transcribing", prov.Name(), float32(f))
@@ -273,6 +278,7 @@ func (h *Handlers) Transcribe(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		return h.failVideo(ctx, v.ID, err)
 	}
+	_ = os.RemoveAll(h.whisperWorkDir(v.ID)) // resume data no longer needed
 	if err := h.Store.SaveTranscript(ctx, &store.Transcript{
 		VideoID: v.ID, Language: res.Language, Provider: res.Provider,
 		Words: res.Words, Segments: media.BuildSegments(res.Words),
@@ -659,4 +665,9 @@ func (h *Handlers) purgeUploadDerived(ctx context.Context, v *store.Video) {
 	}
 	_ = h.Store.SetVideoPaths(ctx, v.ID, proxy, "")
 	h.Log.Info("purged upload audio/preview, kept original", "video", v.ID)
+}
+
+// whisperWorkDir holds per-chunk whisper.cpp results so retries resume.
+func (h *Handlers) whisperWorkDir(videoID string) string {
+	return filepath.Join(h.Layout.VideoDir(videoID), "whisper")
 }

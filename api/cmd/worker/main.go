@@ -14,6 +14,7 @@ import (
 	"github.com/malinanu/youtubeclipping/api/internal/db"
 	"github.com/malinanu/youtubeclipping/api/internal/events"
 	"github.com/malinanu/youtubeclipping/api/internal/ffmpeg"
+	"github.com/malinanu/youtubeclipping/api/internal/heavy"
 	"github.com/malinanu/youtubeclipping/api/internal/media"
 	"github.com/malinanu/youtubeclipping/api/internal/store"
 	"github.com/malinanu/youtubeclipping/api/internal/tasks"
@@ -59,7 +60,14 @@ func run(log *slog.Logger) error {
 	if err := layout.Ensure(layout.TmpDir()); err != nil {
 		return err
 	}
+	// One gate shared by whisper.cpp and ffmpeg encodes: running both at once
+	// on a small VM is the usual cause of OOM kills.
+	heavyGate := heavy.New(cfg.HeavyJobs)
+	gate := func(ctx context.Context) (func(), error) {
+		return heavyGate.Acquire(ctx, func() { log.Info("waiting for another heavy job to finish") })
+	}
 	h := &tasks.Handlers{
+		Gate:  gate,
 		Cfg:   cfg,
 		Store: store.New(pool),
 		Bus:   events.NewBus(rdb),
@@ -67,7 +75,7 @@ func run(log *slog.Logger) error {
 		Enq:   &tasks.Enqueuer{C: aq},
 		YtDlp: &ytdlp.Client{Bin: cfg.YtDlpBin, CookiesFile: cfg.CookiesFile, Proxy: cfg.YtDlpProxy,
 			POTURL: cfg.YtDlpPOTURL, UpdateCmd: cfg.YtDlpUpdate, ExtraArgs: cfg.YtDlpExtra},
-		FF:     &ffmpeg.Runner{FFmpeg: cfg.FFmpegBin, FFprobe: cfg.FFprobeBin, Threads: cfg.FFmpegThreads},
+		FF:     &ffmpeg.Runner{FFmpeg: cfg.FFmpegBin, FFprobe: cfg.FFprobeBin, Threads: cfg.FFmpegThreads, Gate: gate},
 		Layout: layout,
 		Log:    log,
 	}

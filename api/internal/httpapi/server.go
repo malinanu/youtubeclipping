@@ -320,6 +320,7 @@ func (s *Server) retranscribe(c *gin.Context) {
 		bad(c, "source audio was purged; use retry to re-import")
 		return
 	}
+	_ = os.RemoveAll(filepath.Join(s.Layout.VideoDir(v.ID), "whisper")) // start fresh, no resumed chunks
 	_ = s.Store.SetVideoStatus(ctx, v.ID, "transcribing", "queued", 0, "")
 	if err := s.Enq.Transcribe(ctx, v.ID); err != nil {
 		_ = s.Store.SetVideoStatus(context.WithoutCancel(ctx), v.ID, "failed", "", 0, "could not queue job: "+err.Error())
