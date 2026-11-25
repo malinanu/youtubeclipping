@@ -701,12 +701,14 @@ func (s *Server) getSettings(c *gin.Context) {
 		"whisperModel": eff.WhisperModel, "whisperLanguage": eff.WhisperLanguage,
 		"transcribeProvider": eff.TranscribeProvider, "fallbackProvider": eff.FallbackProvider,
 		"fallbackOverMinutes": eff.FallbackOverMin, "claudeModel": eff.ClaudeModel,
+		"aiProvider": eff.AIProvider, "geminiModel": eff.GeminiModel,
 		"postizUrl":     eff.PostizURL,
 		"suggestMinSec": eff.SuggestMinSec, "suggestMaxSec": eff.SuggestMaxSec, "suggestCount": eff.SuggestCount,
 		"suggestInstructions": eff.SuggestInstruction,
 		"secrets": gin.H{
 			"anthropicApiKey": mask(eff.AnthropicAPIKey), "openaiApiKey": mask(eff.OpenAIAPIKey),
-			"groqApiKey": mask(eff.GroqAPIKey), "postizApiKey": mask(eff.PostizAPIKey),
+			"geminiApiKey": mask(eff.GeminiAPIKey),
+			"groqApiKey":   mask(eff.GroqAPIKey), "postizApiKey": mask(eff.PostizAPIKey),
 		},
 	})
 }
@@ -735,6 +737,7 @@ func (s *Server) putSettings(c *gin.Context) {
 		return strings.TrimSpace(newV)
 	}
 	next.AnthropicAPIKey = keep(in.AnthropicAPIKey, cur.AnthropicAPIKey)
+	next.GeminiAPIKey = keep(in.GeminiAPIKey, cur.GeminiAPIKey)
 	next.OpenAIAPIKey = keep(in.OpenAIAPIKey, cur.OpenAIAPIKey)
 	next.GroqAPIKey = keep(in.GroqAPIKey, cur.GroqAPIKey)
 	next.PostizAPIKey = keep(in.PostizAPIKey, cur.PostizAPIKey)
@@ -742,6 +745,8 @@ func (s *Server) putSettings(c *gin.Context) {
 		switch k {
 		case "anthropicApiKey":
 			next.AnthropicAPIKey = ""
+		case "geminiApiKey":
+			next.GeminiAPIKey = ""
 		case "openaiApiKey":
 			next.OpenAIAPIKey = ""
 		case "groqApiKey":
@@ -749,6 +754,16 @@ func (s *Server) putSettings(c *gin.Context) {
 		case "postizApiKey":
 			next.PostizAPIKey = ""
 		}
+	}
+	switch next.AIProvider {
+	case "", "auto", "claude", "gemini":
+	default:
+		bad(c, "aiProvider must be auto, claude or gemini")
+		return
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9._\-]*$`).MatchString(next.GeminiModel + next.ClaudeModel) {
+		bad(c, "invalid model name")
+		return
 	}
 	if !regexp.MustCompile(`^[a-z0-9.\-]*$`).MatchString(next.WhisperModel) {
 		bad(c, "invalid whisper model")

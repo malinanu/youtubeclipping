@@ -1,6 +1,6 @@
 # ClipForge
 
-ClipForge is a self-hosted clipping studio for **YouTube and Twitch**. You paste a URL, it transcribes the video locally with whisper.cpp, and you pick moments by hand or let Claude suggest highlights. You can fix caption text, then render 9:16, 1:1 or 16:9 clips with burned-in animated captions plus an SRT file. Finished clips can be pushed to **Postiz** for scheduling.
+ClipForge is a self-hosted clipping studio for **YouTube and Twitch**. You paste a URL, it transcribes the video locally with whisper.cpp, and you pick moments by hand or let Claude or Gemini suggest highlights. You can fix caption text, then render 9:16, 1:1 or 16:9 clips with burned-in animated captions plus an SRT file. Finished clips can be pushed to **Postiz** for scheduling.
 
 It runs on an Oracle Cloud Ampere (arm64) VM, deployed in one of two ways:
 - **Portainer + CloudPanel, reusing existing Postgres/Redis containers** with prebuilt GHCR images. See [docs/DEPLOY-PORTAINER.md](docs/DEPLOY-PORTAINER.md).
@@ -12,7 +12,7 @@ It runs on an Oracle Cloud Ampere (arm64) VM, deployed in one of two ways:
 |---|---|
 | **Import** | `yt-dlp` reads metadata and downloads a small 360p **editor proxy** only, not the full-quality VOD. ffmpeg extracts 16 kHz audio. |
 | **Transcribe** | `whisper.cpp` (local, word timestamps) runs, with an optional OpenAI/Groq API fallback. Long VODs are chunked, with live progress. |
-| **Pick clips** | Click words to seek and drag across the transcript to select. Mark In/Out with `I`/`O`. You can also use **Suggest clips with AI** (Claude reads the timestamped transcript and returns scored, non-overlapping clips snapped to word boundaries). |
+| **Pick clips** | Click words to seek and drag across the transcript to select. Mark In/Out with `I`/`O`. You can also use **Suggest clips with AI** (Claude or Gemini reads the timestamped transcript and returns scored, non-overlapping clips snapped to word boundaries). |
 | **Edit** | Trim handles, a draggable 9:16 reframe box, the caption style, and per-clip word fixes, all with a live caption preview on the player. |
 | **Render** | yt-dlp resolves direct stream URLs and ffmpeg seeks precisely, encoding **only that range** at up to 1080p. The cover crop and libass ASS captions (highlight / pop / karaoke) are applied, plus loudness normalisation, H.264/AAC and faststart. If streaming fails, the fallback is `yt-dlp --download-sections`. |
 | **Publish** | Upload to Postiz, then create a post (now, scheduled, or draft) on the selected channels. |

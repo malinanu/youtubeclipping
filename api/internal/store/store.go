@@ -476,8 +476,11 @@ type Settings struct {
 	TranscribeProvider string `json:"transcribeProvider"` // local|openai|groq
 	FallbackProvider   string `json:"fallbackProvider"`   // none|openai|groq
 	FallbackOverMin    int    `json:"fallbackOverMinutes"`
+	AIProvider         string `json:"aiProvider"` // auto|claude|gemini
 	AnthropicAPIKey    string `json:"anthropicApiKey,omitempty"`
 	ClaudeModel        string `json:"claudeModel"`
+	GeminiAPIKey       string `json:"geminiApiKey,omitempty"`
+	GeminiModel        string `json:"geminiModel"`
 	OpenAIAPIKey       string `json:"openaiApiKey,omitempty"`
 	GroqAPIKey         string `json:"groqApiKey,omitempty"`
 	PostizURL          string `json:"postizUrl"`

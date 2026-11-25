@@ -10,7 +10,7 @@ type SecretKey = keyof Settings["secrets"];
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
   const [sys, setSys] = useState<SystemInfo | null>(null);
-  const [secrets, setSecrets] = useState<Record<SecretKey, string>>({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "" });
+  const [secrets, setSecrets] = useState<Record<SecretKey, string>>({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "", geminiApiKey: "" });
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
@@ -27,7 +27,7 @@ export default function SettingsPage() {
       void _masked;
       const next = await api.saveSettings({ ...rest, ...secrets, clearSecrets: clear });
       setS(next);
-      setSecrets({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "" });
+      setSecrets({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "", geminiApiKey: "" });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 2000);
     } catch (e) {
@@ -100,12 +100,25 @@ export default function SettingsPage() {
           </div>
         </Section>
 
-        <Section title="AI clip suggestions (Claude)">
+        <Section title="AI clip suggestions">
           <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="label">Provider</label>
+              <select className="input" value={s.aiProvider} onChange={(e) => set({ aiProvider: e.target.value as Settings["aiProvider"] })}>
+                <option value="auto">Auto (Claude if its key is set, otherwise Gemini)</option>
+                <option value="claude">Claude (Anthropic)</option>
+                <option value="gemini">Gemini (Google)</option>
+              </select>
+            </div>
             <div className="col-span-2">{secret("anthropicApiKey", "Anthropic API key", "Leave blank to keep the current key, or use ANTHROPIC_API_KEY in the environment.")}</div>
-            <div>
-              <label className="label">Model</label>
+            <div className="col-span-2">
+              <label className="label">Claude model</label>
               <input className="input font-mono" value={s.claudeModel} onChange={(e) => set({ claudeModel: e.target.value })} />
+            </div>
+            <div className="col-span-2">{secret("geminiApiKey", "Gemini API key", "Create one at aistudio.google.com → Get API key. Or set GEMINI_API_KEY in the environment.")}</div>
+            <div className="col-span-2">
+              <label className="label">Gemini model</label>
+              <input className="input font-mono" value={s.geminiModel} onChange={(e) => set({ geminiModel: e.target.value })} placeholder="gemini-3.5-flash-lite" />
             </div>
             <div>
               <label className="label">Number of clips</label>

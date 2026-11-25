@@ -51,8 +51,11 @@ type Config struct {
 	MediaRetentionDays    int
 
 	// Integrations (can be overridden by settings table)
+	AIProvider      string // auto|claude|gemini
 	AnthropicAPIKey string
 	ClaudeModel     string
+	GeminiAPIKey    string
+	GeminiModel     string
 	OpenAIAPIKey    string
 	GroqAPIKey      string
 	PostizURL       string
@@ -96,8 +99,11 @@ func Load() (*Config, error) {
 		WhisperThreads:        envInt("WHISPER_THREADS", runtime.NumCPU()),
 		MediaRetentionDays:    envInt("MEDIA_RETENTION_DAYS", 14),
 
+		AIProvider:      strings.ToLower(env("AI_PROVIDER", "auto")),
 		AnthropicAPIKey: env("ANTHROPIC_API_KEY", ""),
 		ClaudeModel:     env("CLAUDE_MODEL", "claude-opus-5-5"),
+		GeminiAPIKey:    env("GEMINI_API_KEY", ""),
+		GeminiModel:     env("GEMINI_MODEL", "gemini-3.5-flash-lite"),
 		OpenAIAPIKey:    env("OPENAI_API_KEY", ""),
 		GroqAPIKey:      env("GROQ_API_KEY", ""),
 		PostizURL:       strings.TrimRight(env("POSTIZ_API_URL", ""), "/"),

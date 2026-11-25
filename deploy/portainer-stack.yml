@@ -1,7 +1,8 @@
 # ClipForge stack for Portainer (Stacks → Add stack → Repository, compose path: deploy/portainer-stack.yml).
 #
-# Uses your EXISTING Postgres and Redis containers (joined via the external network ${DB_NETWORK})
-# and prebuilt arm64 images from GHCR. CloudPanel's nginx is the public entry point:
+# Uses your EXISTING Postgres and Redis containers, reached through the Docker host gateway
+# (172.17.0.1 or host.docker.internal) where their ports are published, and prebuilt arm64
+# images from GHCR. CloudPanel's nginx is the public entry point:
 #   /api/* → 127.0.0.1:${API_PORT}   everything else → 127.0.0.1:${WEB_PORT}
 # See docs/DEPLOY-PORTAINER.md for the variables to set in Portainer.
 
@@ -14,15 +15,18 @@ x-backend: &backend
   restart: unless-stopped
   environment:
     DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
-    REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR (e.g. redis:6379)}
+    REDIS_ADDR: ${REDIS_ADDR:?set REDIS_ADDR (e.g. 172.17.0.1:6379)}
     REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     REDIS_DB: ${REDIS_DB:-5}
     ADMIN_EMAIL: ${ADMIN_EMAIL:?set ADMIN_EMAIL}
     ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?set ADMIN_PASSWORD_HASH}
     SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
     COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    AI_PROVIDER: ${AI_PROVIDER:-auto}
     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-opus-5-5}
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     GROQ_API_KEY: ${GROQ_API_KEY:-}
     POSTIZ_API_URL: ${POSTIZ_API_URL:-}
@@ -40,7 +44,8 @@ x-backend: &backend
   volumes:
     - media:/data
     - ${MODELS_DIR:-/opt/clipforge/models}:/models:ro
-  networks: [default, shared]
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   logging: *logging
 
 services:
@@ -73,11 +78,6 @@ services:
     restart: unless-stopped
     init: true
     logging: *logging
-
-networks:
-  shared:
-    external: true
-    name: ${DB_NETWORK:?set DB_NETWORK to the network your postgres/redis containers are on}
 
 volumes:
   media:

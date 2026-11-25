@@ -75,12 +75,14 @@ export type Settings = {
   fallbackProvider: "none" | "openai" | "groq";
   fallbackOverMinutes: number;
   claudeModel: string;
+  aiProvider: "auto" | "claude" | "gemini";
+  geminiModel: string;
   postizUrl: string;
   suggestMinSec: number;
   suggestMaxSec: number;
   suggestCount: number;
   suggestInstructions: string;
-  secrets: Record<"anthropicApiKey" | "openaiApiKey" | "groqApiKey" | "postizApiKey", string>;
+  secrets: Record<"anthropicApiKey" | "openaiApiKey" | "groqApiKey" | "postizApiKey" | "geminiApiKey", string>;
 };
 
 export type Integration = { id: string; name: string; identifier: string; picture: string; disabled: boolean };

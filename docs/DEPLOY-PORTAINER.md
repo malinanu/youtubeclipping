@@ -7,7 +7,7 @@ Internet ─TLS─► CloudPanel nginx (clips.example.com)
                    ├─ /api/*  ─► 127.0.0.1:18080   api  (Go, live progress via SSE)
                    └─ /       ─► 127.0.0.1:13000   web  (Next.js)
 Portainer stack "clipforge":  api · worker · web · bgutil
-   └─ joins your existing Docker network ─► postgres (database "clipforge") · redis (DB index 5)
+   └─ via the Docker host gateway 172.17.0.1 ─► postgres :5432 (database "clipforge") · redis :6379 (DB index 5)
 ```
 
 Images are built for arm64 by GitHub Actions (`.github/workflows/images.yml`) and published to GHCR:
@@ -35,33 +35,41 @@ CREATE DATABASE clipforge OWNER clipforge;
 
 The tables are created automatically on first start, through embedded migrations.
 
-## 2. Find the shared Docker network
+## 2. How ClipForge reaches Postgres and Redis
 
-ClipForge reaches Postgres and Redis by container name over a Docker network. On the server:
+ClipForge connects through the **Docker host gateway**, `172.17.0.1`, to the ports your Postgres and Redis containers publish on the host. `host.docker.internal` also works and resolves to the same address.
 
-```bash
-docker ps --format '{{.Names}}' | grep -Ei 'postgres|redis'
-```
-```bash
-docker inspect <postgres-container> -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'
-```
-```bash
-docker inspect <redis-container> -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}'
-```
+> Don't use `localhost`. Inside a container, `localhost` is the container itself, not your server.
 
-Pick a network both containers share and use it as `DB_NETWORK`. If they're only on the default `bridge` network, which has no DNS, create a shared network and attach them. This causes no downtime:
+Check that both ports are published so other containers can reach them:
 
 ```bash
-docker network create shared-db
-```
-```bash
-docker network connect shared-db <postgres-container>
-```
-```bash
-docker network connect shared-db <redis-container>
+docker ps --format '{{.Names}}\t{{.Ports}}' | grep -E '5432|6379'
 ```
 
-You can also do this in Portainer under **Networks → Add network**, then go to each container and use **Join network**.
+| What you see | Meaning |
+|---|---|
+| `0.0.0.0:5432->5432/tcp` or `172.17.0.1:5432->…` | ✅ Reachable at `172.17.0.1:5432` |
+| `127.0.0.1:6379->6379/tcp` | ❌ Loopback only, so containers can't reach it. In Portainer, edit that container and change the port's host IP to `172.17.0.1`, then redeploy it. |
+| no port shown | ❌ Not published. Publish it on `172.17.0.1`, or use the shared-network method below. |
+
+**Security note:** a port published on `0.0.0.0` is open on every interface, and Docker bypasses ufw/iptables for published ports. A **passwordless Redis** on `0.0.0.0` is then protected only by Oracle's VCN security list. Make sure **5432 and 6379 are *not*** in your VCN ingress rules (Networking → VCN → Security Lists). Better still, publish them on `172.17.0.1` only, which is reachable from containers but not from the internet, and give Redis a password (`--requirepass`).
+
+Quick connectivity test from a throwaway container:
+
+```bash
+docker run --rm --add-host=host.docker.internal:host-gateway redis:7-alpine redis-cli -h 172.17.0.1 -p 6379 ping
+```
+It should print `PONG`.
+
+<details><summary>Alternative: shared Docker network (container names instead of IPs)</summary>
+
+If you'd rather not publish ports, put Postgres, Redis and ClipForge on one user-defined network:
+
+1. `docker network create shared-db`, then `docker network connect shared-db <postgres-container>` and `docker network connect shared-db <redis-container>`.
+2. In the Portainer stack editor, add `networks: [default, shared-db]` to the `api` and `worker` services, plus a top-level `networks: { shared-db: { external: true } }`.
+3. Use the container names in the URLs, for example `@postgres:5432` and `REDIS_ADDR=redis:6379`.
+</details>
 
 ## 3. Redis checks
 
@@ -119,9 +127,8 @@ The first command outputs the value for `ADMIN_PASSWORD_HASH`. It's the bcrypt h
 - **Environment variables**: use *Advanced mode* and paste the block below, then edit the values:
 
 ```env
-DB_NETWORK=shared-db
-DATABASE_URL=postgres://clipforge:use-a-long-hex-password@postgres:5432/clipforge?sslmode=disable
-REDIS_ADDR=redis:6379
+DATABASE_URL=postgres://clipforge:<your-db-password>@172.17.0.1:5432/clipforge?sslmode=disable
+REDIS_ADDR=172.17.0.1:6379
 REDIS_PASSWORD=
 REDIS_DB=5
 
@@ -130,8 +137,11 @@ ADMIN_PASSWORD_HASH=paste-hashpw-output-from-step-6
 SESSION_SECRET=paste-openssl-output
 COOKIE_SECURE=true
 
+AI_PROVIDER=auto
 ANTHROPIC_API_KEY=
 CLAUDE_MODEL=claude-opus-5-5
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-3.5-flash-lite
 OPENAI_API_KEY=
 GROQ_API_KEY=
 POSTIZ_API_URL=
@@ -146,7 +156,7 @@ FFMPEG_THREADS=4
 MEDIA_RETENTION_DAYS=14
 ```
 
-Replace `postgres` and `redis` in the URLs with your **actual container names** from step 2. Use a hex or alphanumeric DB password; symbols such as `@`, `/` and `#` break the URL unless they're percent-encoded.
+Leave `REDIS_PASSWORD` empty if your Redis has no password. Use a hex or alphanumeric DB password; symbols such as `@`, `/` and `#` break the URL unless they're percent-encoded.
 
 Click **Deploy the stack**. Then check that the API is healthy:
 
@@ -186,7 +196,21 @@ Open `https://clips.example.com` and sign in with `ADMIN_EMAIL` and your passwor
 
 If the domain is proxied through Cloudflare (orange cloud), SSE still works. Cloudflare doesn't buffer `text/event-stream`.
 
-## 9. Updating
+## 9. AI clip suggestions: Claude or Gemini
+
+"Suggest clips with AI" works with either provider. Pick one:
+
+- **Gemini:** create a key at [Google AI Studio](https://aistudio.google.com) → **Get API key**.
+- **Claude:** create a key at [console.anthropic.com](https://console.anthropic.com) → **API keys**.
+
+There are two ways to add the key:
+
+1. **In the app (recommended, no redeploy):** go to **Settings → AI clip suggestions**. Set **Provider** to *Gemini* (or *Claude*), paste the key, and click **Save settings**. It applies to the next suggestion run. The key is stored in ClipForge's database and shown masked.
+2. **In the stack env:** set `GEMINI_API_KEY=…` (and optionally `AI_PROVIDER=gemini`) in Portainer, then **Update the stack**. Values saved in the Settings page override the env.
+
+`AI_PROVIDER=auto` uses Claude when an Anthropic key is set, otherwise Gemini. The Gemini model defaults to `gemini-3.5-flash-lite` (fast and cheap). You can change it in Settings, for example to `gemini-3.8-flash` for higher quality.
+
+## 10. Updating
 
 1. Push to `main`. GitHub Actions builds new `:latest` images.
 2. In Portainer, go to **Stacks → clipforge → Pull and redeploy**, and tick *Re-pull image*.
@@ -195,7 +219,7 @@ To pin a version, set `CLIPFORGE_TAG=sha-abc1234` (any tag from the package page
 
 Database migrations run automatically on start and are safe to re-run.
 
-## 10. Operations
+## 11. Operations
 
 - **Backups:** run `docker exec <postgres-container> pg_dump -U clipforge clipforge | gzip > clipforge-$(date +%F).sql.gz`. Rendered clips live in the `clipforge_media` volume.
 - **Disk:** editor previews and audio are deleted after `MEDIA_RETENTION_DAYS`. Rendered clips are kept until you delete them in the UI. Check usage with `docker system df -v | grep clipforge`.

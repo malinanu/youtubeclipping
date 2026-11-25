@@ -299,8 +299,9 @@ func (h *Handlers) Suggest(ctx context.Context, t *asynq.Task) error {
 	h.setSuggest(ctx, v.ID, SuggestState{Status: "running"})
 	eff := h.settings(ctx)
 	instr := strings.TrimSpace(strings.Join([]string{eff.SuggestInstruction, p.Instructions}, "\n"))
+	provider, key, model := eff.SuggestProvider()
 	sugg, err := llm.Suggest(ctx, llm.Options{
-		APIKey: eff.AnthropicAPIKey, Model: eff.ClaudeModel, VideoTitle: v.Title,
+		Provider: provider, APIKey: key, Model: model, VideoTitle: v.Title,
 		MinSec: eff.SuggestMinSec, MaxSec: eff.SuggestMaxSec, Count: eff.SuggestCount, Instructions: instr,
 	}, tr.Words)
 	if err != nil {

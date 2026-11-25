@@ -82,8 +82,11 @@ type Effective struct {
 	TranscribeProvider string
 	FallbackProvider   string
 	FallbackOverMin    int
+	AIProvider         string // configured: auto|claude|gemini
 	AnthropicAPIKey    string
 	ClaudeModel        string
+	GeminiAPIKey       string
+	GeminiModel        string
 	OpenAIAPIKey       string
 	GroqAPIKey         string
 	PostizURL          string
@@ -116,8 +119,11 @@ func Resolve(cfg *config.Config, s *store.Settings) Effective {
 		TranscribeProvider: pick(s.TranscribeProvider, "local"),
 		FallbackProvider:   pick(s.FallbackProvider, "none"),
 		FallbackOverMin:    s.FallbackOverMin,
+		AIProvider:         pick(s.AIProvider, pick(cfg.AIProvider, "auto")),
 		AnthropicAPIKey:    pick(s.AnthropicAPIKey, cfg.AnthropicAPIKey),
 		ClaudeModel:        pick(s.ClaudeModel, cfg.ClaudeModel),
+		GeminiAPIKey:       pick(s.GeminiAPIKey, cfg.GeminiAPIKey),
+		GeminiModel:        pick(s.GeminiModel, pick(cfg.GeminiModel, "gemini-3.5-flash-lite")),
 		OpenAIAPIKey:       pick(s.OpenAIAPIKey, cfg.OpenAIAPIKey),
 		GroqAPIKey:         pick(s.GroqAPIKey, cfg.GroqAPIKey),
 		PostizURL:          pick(s.PostizURL, cfg.PostizURL),
@@ -127,4 +133,19 @@ func Resolve(cfg *config.Config, s *store.Settings) Effective {
 		SuggestCount:       pickInt(s.SuggestCount, 8),
 		SuggestInstruction: s.SuggestInstruction,
 	}
+}
+
+// SuggestProvider returns the LLM provider, key and model to use for clip
+// suggestions. "auto" prefers Claude when its key is set, otherwise Gemini.
+func (e Effective) SuggestProvider() (provider, key, model string) {
+	switch e.AIProvider {
+	case "gemini":
+		return "gemini", e.GeminiAPIKey, e.GeminiModel
+	case "claude":
+		return "claude", e.AnthropicAPIKey, e.ClaudeModel
+	}
+	if e.AnthropicAPIKey == "" && e.GeminiAPIKey != "" {
+		return "gemini", e.GeminiAPIKey, e.GeminiModel
+	}
+	return "claude", e.AnthropicAPIKey, e.ClaudeModel
 }

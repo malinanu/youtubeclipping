@@ -9,10 +9,10 @@ Self-hosted YouTube/Twitch clipping: import URL → whisper.cpp transcript → m
   - `internal/ffmpeg` arg builder (`RenderArgs`/`VideoFilter` are pure + unit tested) and runners
   - `internal/captions` ASS (highlight/pop/karaoke/none) + SRT; `FontFamily` maps weight → "Montserrat Black" etc.
   - `internal/whisper` whisper.cpp (`-ml 1 -sow -oj`) + OpenAI-compatible API provider + fallback wrapper
-  - `internal/llm` Claude clip suggestions (structured outputs, server-side fallbacks, word-boundary snapping)
+  - `internal/llm` clip suggestions via a `completer` per provider: Claude (SDK, structured outputs, fallbacks) or Gemini (raw HTTP `generateContent`, JSON schema with prompt fallback); shared prompt/windowing/`Postprocess`
   - `internal/postiz` Public API client; `internal/tasks` job handlers; `internal/store` SQL; `migrations/` goose (embedded)
 - `web/` Next.js 15 App Router client UI; `/api/*` is same-origin (Caddy in prod, rewrite in dev)
-- `deploy/portainer-stack.yml` (prod: existing Postgres/Redis via external network, GHCR images, CloudPanel nginx in front) and `deploy/docker-compose.yml` (self-contained); docs in `docs/DEPLOY-PORTAINER.md`, `docs/DEPLOY-ORACLE.md`
+- `deploy/portainer-stack.yml` (prod: existing Postgres/Redis via Docker host gateway 172.17.0.1, GHCR images, CloudPanel nginx in front) and `deploy/docker-compose.yml` (self-contained); docs in `docs/DEPLOY-PORTAINER.md`, `docs/DEPLOY-ORACLE.md`
 - `.github/workflows/images.yml` builds linux/arm64 images → `ghcr.io/malinanu/clipforge-{backend,web}`
 
 ## Conventions

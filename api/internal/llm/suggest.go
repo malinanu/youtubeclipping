@@ -1,4 +1,4 @@
-// Package llm uses Claude to find highlight clips in a transcript.
+// Package llm uses an LLM (Claude or Gemini) to find highlight clips in a transcript.
 package llm
 
 import (
@@ -25,7 +25,16 @@ type Suggestion struct {
 	Score    float64 `json:"score"`
 }
 
+const (
+	ProviderClaude = "claude"
+	ProviderGemini = "gemini"
+
+	DefaultClaudeModel = "claude-opus-5-5"
+	DefaultGeminiModel = "gemini-3.5-flash-lite"
+)
+
 type Options struct {
+	Provider     string // claude (default) | gemini
 	APIKey       string
 	Model        string
 	VideoTitle   string
@@ -100,10 +109,18 @@ func windows(segs []media.Segment, maxChars int) [][]media.Segment {
 	return out
 }
 
-// Suggest asks Claude for highlight clips and snaps them to word boundaries.
+// completer sends one system+user prompt and returns the model's JSON text.
+type completer interface {
+	complete(ctx context.Context, system, user string) (string, error)
+}
+
+// Suggest asks the configured LLM for highlight clips and snaps them to word boundaries.
 func Suggest(ctx context.Context, opt Options, words []media.Word) ([]Suggestion, error) {
+	if opt.Provider == "" {
+		opt.Provider = ProviderClaude
+	}
 	if opt.APIKey == "" {
-		return nil, ErrNoAPIKey
+		return nil, fmt.Errorf("%w: %s", ErrNoAPIKey, providerKeyHint(opt.Provider))
 	}
 	if len(words) == 0 {
 		return nil, errors.New("transcript is empty")
@@ -117,14 +134,22 @@ func Suggest(ctx context.Context, opt Options, words []media.Word) ([]Suggestion
 	if opt.Count <= 0 {
 		opt.Count = 8
 	}
-	if opt.Model == "" {
-		opt.Model = "claude-opus-5-5"
+
+	var llm completer
+	switch opt.Provider {
+	case ProviderClaude:
+		if opt.Model == "" {
+			opt.Model = DefaultClaudeModel
+		}
+		llm = newClaude(opt)
+	case ProviderGemini:
+		if opt.Model == "" {
+			opt.Model = DefaultGeminiModel
+		}
+		llm = newGemini(opt)
+	default:
+		return nil, fmt.Errorf("%w: unknown AI provider %q", ErrNoAPIKey, opt.Provider)
 	}
-	reqOpts := []option.RequestOption{option.WithAPIKey(opt.APIKey), option.WithRequestTimeout(8 * time.Minute), option.WithMaxRetries(3)}
-	if opt.BaseURL != "" {
-		reqOpts = append(reqOpts, option.WithBaseURL(opt.BaseURL))
-	}
-	client := anthropic.NewClient(reqOpts...)
 
 	segs := media.BuildSegments(words)
 	wins := windows(segs, 400_000) // ~100k tokens per request
@@ -142,36 +167,11 @@ func Suggest(ctx context.Context, opt Options, words []media.Word) ([]Suggestion
 		}
 		user += "\n<transcript>\n" + formatTranscript(w) + "</transcript>"
 
-		params := anthropic.BetaMessageNewParams{
-			Model:     anthropic.Model(opt.Model),
-			MaxTokens: 16000,
-			System:    []anthropic.BetaTextBlockParam{{Text: systemPrompt}},
-			Messages:  []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(user))},
-			OutputConfig: anthropic.BetaOutputConfigParam{
-				Effort: anthropic.BetaOutputConfigEffortMedium,
-				Format: anthropic.BetaJSONOutputFormatParam{Schema: schema},
-			},
-			// Re-serve on a fallback model if the primary declines (e.g. classifier false positive).
-			Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
-			Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
-		}
-		resp, err := client.Beta.Messages.New(ctx, params)
+		text, err := llm.complete(ctx, systemPrompt, user)
 		if err != nil {
-			return nil, fmt.Errorf("claude: %w", err)
+			return nil, err
 		}
-		switch resp.StopReason {
-		case anthropic.BetaStopReasonRefusal:
-			return nil, errors.New("Claude declined to analyse this transcript")
-		case anthropic.BetaStopReasonMaxTokens:
-			return nil, errors.New("Claude response was truncated (max_tokens)")
-		}
-		var text strings.Builder
-		for _, block := range resp.Content {
-			if tb, ok := block.AsAny().(anthropic.BetaTextBlock); ok {
-				text.WriteString(tb.Text)
-			}
-		}
-		got, err := ParseResponse(text.String())
+		got, err := ParseResponse(text)
 		if err != nil {
 			return nil, err
 		}
@@ -180,8 +180,63 @@ func Suggest(ctx context.Context, opt Options, words []media.Word) ([]Suggestion
 	return Postprocess(all, words, opt.MinSec, opt.MaxSec, opt.Count), nil
 }
 
-// ErrNoAPIKey is returned when no Anthropic key is configured.
-var ErrNoAPIKey = errors.New("Anthropic API key not configured (Settings or ANTHROPIC_API_KEY)")
+func providerKeyHint(p string) string {
+	if p == ProviderGemini {
+		return "Gemini API key not configured (Settings or GEMINI_API_KEY)"
+	}
+	return "Anthropic API key not configured (Settings or ANTHROPIC_API_KEY)"
+}
+
+// ---------- Claude ----------
+
+type claudeCompleter struct {
+	client anthropic.Client
+	model  string
+}
+
+func newClaude(opt Options) *claudeCompleter {
+	reqOpts := []option.RequestOption{option.WithAPIKey(opt.APIKey), option.WithRequestTimeout(8 * time.Minute), option.WithMaxRetries(3)}
+	if opt.BaseURL != "" {
+		reqOpts = append(reqOpts, option.WithBaseURL(opt.BaseURL))
+	}
+	return &claudeCompleter{client: anthropic.NewClient(reqOpts...), model: opt.Model}
+}
+
+func (c *claudeCompleter) complete(ctx context.Context, system, user string) (string, error) {
+	params := anthropic.BetaMessageNewParams{
+		Model:     anthropic.Model(c.model),
+		MaxTokens: 16000,
+		System:    []anthropic.BetaTextBlockParam{{Text: system}},
+		Messages:  []anthropic.BetaMessageParam{anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(user))},
+		OutputConfig: anthropic.BetaOutputConfigParam{
+			Effort: anthropic.BetaOutputConfigEffortMedium,
+			Format: anthropic.BetaJSONOutputFormatParam{Schema: schema},
+		},
+		// Re-serve on a fallback model if the primary declines (e.g. classifier false positive).
+		Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
+		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
+	}
+	resp, err := c.client.Beta.Messages.New(ctx, params)
+	if err != nil {
+		return "", fmt.Errorf("claude: %w", err)
+	}
+	switch resp.StopReason {
+	case anthropic.BetaStopReasonRefusal:
+		return "", errors.New("Claude declined to analyse this transcript")
+	case anthropic.BetaStopReasonMaxTokens:
+		return "", errors.New("Claude response was truncated (max_tokens)")
+	}
+	var text strings.Builder
+	for _, block := range resp.Content {
+		if tb, ok := block.AsAny().(anthropic.BetaTextBlock); ok {
+			text.WriteString(tb.Text)
+		}
+	}
+	return text.String(), nil
+}
+
+// ErrNoAPIKey marks missing or invalid provider configuration.
+var ErrNoAPIKey = errors.New("AI provider not configured")
 
 // IsPermanent reports errors that retrying will not fix (bad key, bad model, bad request).
 func IsPermanent(err error) bool {
@@ -190,18 +245,30 @@ func IsPermanent(err error) bool {
 	}
 	var apierr *anthropic.Error
 	if errors.As(err, &apierr) {
-		c := apierr.StatusCode
-		return c >= 400 && c < 500 && c != 408 && c != 409 && c != 429
+		return permanentStatus(apierr.StatusCode)
+	}
+	var gerr *APIError
+	if errors.As(err, &gerr) {
+		return permanentStatus(gerr.StatusCode)
 	}
 	return false
 }
 
+func permanentStatus(c int) bool { return c >= 400 && c < 500 && c != 408 && c != 409 && c != 429 }
+
+// ParseResponse decodes {"clips":[...]}, tolerating a markdown code fence.
 func ParseResponse(s string) ([]Suggestion, error) {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		s = strings.TrimPrefix(s, "```json")
+		s = strings.TrimPrefix(s, "```")
+		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+	}
 	var out struct {
 		Clips []Suggestion `json:"clips"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &out); err != nil {
-		return nil, fmt.Errorf("parse claude json: %w", err)
+		return nil, fmt.Errorf("parse model json: %w", err)
 	}
 	return out.Clips, nil
 }
