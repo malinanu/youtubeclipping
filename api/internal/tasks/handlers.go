@@ -286,6 +286,13 @@ func (h *Handlers) Transcribe(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 	h.videoStatus(ctx, v.ID, "ready", "", 1, "")
+	if eff.AutoSuggest && eff.HasAIKey() {
+		h.setSuggest(ctx, v.ID, SuggestState{Status: "queued"})
+		if err := h.Enq.Suggest(ctx, SuggestPayload{VideoID: v.ID, Replace: true}); err != nil {
+			h.Log.Warn("auto-suggest enqueue", "video", v.ID, "err", err)
+			h.setSuggest(context.WithoutCancel(ctx), v.ID, SuggestState{Status: "failed", Error: "could not queue AI suggestions"})
+		}
+	}
 	return nil
 }
 

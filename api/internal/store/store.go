@@ -489,6 +489,8 @@ type Settings struct {
 	SuggestMaxSec      int    `json:"suggestMaxSec"`
 	SuggestCount       int    `json:"suggestCount"`
 	SuggestInstruction string `json:"suggestInstructions"`
+	// AutoSuggest runs AI clip suggestion after transcription; nil means on.
+	AutoSuggest *bool `json:"autoSuggest,omitempty"`
 }
 
 func (s *Store) GetSettings(ctx context.Context) (*Settings, error) {

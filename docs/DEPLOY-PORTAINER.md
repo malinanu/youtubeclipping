@@ -201,6 +201,8 @@ There are two ways to add the key:
 
 `AI_PROVIDER=auto` uses Claude when an Anthropic key is set, otherwise Gemini. The Gemini model defaults to `gemini-3.5-flash-lite` (fast and cheap). You can change it in Settings, for example to `gemini-3.8-flash` for higher quality.
 
+Once a key is set, suggestions run automatically when a transcript finishes, and the clips appear in the **Clips** tab. You can turn this off under **Settings → Automatically suggest clips with AI after transcription**. For videos that were already transcribed, click **AI clips** in the video header.
+
 ## 9b. Uploading video files
 
 Instead of pasting a URL, you can use **Upload file** on the home page. This suits long streams you've downloaded and pre-cut yourself, or videos YouTube won't let the server fetch.

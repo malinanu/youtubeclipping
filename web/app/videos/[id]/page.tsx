@@ -180,6 +180,26 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
           </div>
         </div>
         {video.status === "ready" && (
+          <div className="flex flex-col items-end gap-1">
+            <button
+              className="btn-primary"
+              disabled={!transcript || suggestBusy}
+              onClick={() => {
+                setTab("clips");
+                setSuggestOpts((o) => ({ ...o, open: true }));
+              }}
+            >
+              {suggestBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {suggestBusy ? "Finding highlights…" : "AI clips"}
+            </button>
+            {suggest.status === "failed" && suggest.error && (
+              <p className="max-w-xs truncate text-xs text-red-400" title={suggest.error}>
+                AI: {suggest.error}
+              </p>
+            )}
+          </div>
+        )}
+        {video.status === "ready" && (
           <button className="btn-ghost" onClick={() => confirm("Re-run transcription? Existing clips are kept.") && api.retranscribe(id).then(() => api.video(id).then(setVideo))}>
             <RotateCcw size={14} /> Re-transcribe
           </button>
