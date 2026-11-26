@@ -62,6 +62,7 @@ export function ClipPanel({
   const [busy, setBusy] = useState<"" | "save" | "render">("");
   const [error, setError] = useState("");
   const [editWords, setEditWords] = useState(false);
+  const [videoErr, setVideoErr] = useState<string | null>(null);
   const dirty = JSON.stringify(stripState(draft)) !== JSON.stringify(stripState(saved));
   const set = (patch: Partial<Clip>) => onDraft({ ...draft, ...patch });
   const rendering = saved.status === "queued" || saved.status === "rendering";
@@ -197,6 +198,8 @@ export function ClipPanel({
             key={version}
             src={api.clipFile(saved.id, "mp4", false, version)}
             poster={api.clipFile(saved.id, "thumb", false, version)}
+            onError={() => setVideoErr(version)}
+            onLoadedData={() => setVideoErr(null)}
             controls
             className={cn("mx-auto max-h-[420px] rounded bg-black", saved.aspect === "16:9" ? "w-full" : "h-[420px]")}
           />
@@ -208,6 +211,7 @@ export function ClipPanel({
               <Download size={14} /> SRT
             </a>
           </div>
+          {videoErr === version && <p className="text-[11px] text-red-400">Couldn&apos;t load the rendered file. Re-render the clip.</p>}
           {dirty && <p className="text-[11px] text-amber-300">Unsaved changes are not in this render.</p>}
         </div>
       )}

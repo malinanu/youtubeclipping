@@ -487,6 +487,9 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		if err := h.FF.Render(ctx, opts, progress(0, 0.95)); err != nil {
 			return fail(err)
 		}
+		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
+			return fail(err)
+		}
 		return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
 	}
 
@@ -497,6 +500,11 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 			opts.Inputs = append(opts.Inputs, ffmpeg.Input{Path: s.URL, Headers: s.Headers})
 		}
 		rerr = h.FF.Render(ctx, opts, progress(0, 0.95))
+		if rerr == nil {
+			// ffmpeg can exit 0 with no frames (e.g. a remote input ends early
+			// and -shortest cuts everything); treat that as a failed attempt.
+			rerr = h.checkOutput(ctx, tmpOut, durSec)
+		}
 	}
 	// 2) Fallback: let yt-dlp download just the section, then encode locally.
 	if rerr != nil {
@@ -511,9 +519,32 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		if err := h.FF.Render(ctx, opts, progress(0.5, 0.45)); err != nil {
 			return fail(err)
 		}
+		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
+			return fail(err)
+		}
 	}
 
 	return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
+}
+
+// checkOutput rejects a render that ffmpeg reported as successful but that has
+// no video or is much shorter than the clip.
+func (h *Handlers) checkOutput(ctx context.Context, path string, wantSec float64) error {
+	pr, err := h.FF.Probe(ctx, path)
+	if err != nil {
+		return fmt.Errorf("rendered file is unreadable: %w", err)
+	}
+	return outputOK(pr, wantSec)
+}
+
+func outputOK(pr *ffmpeg.ProbeResult, wantSec float64) error {
+	if pr == nil || pr.Width <= 0 || pr.VideoCodec == "" {
+		return errors.New("rendered file has no video stream")
+	}
+	if pr.DurationSec < max(1, 0.8*wantSec) {
+		return fmt.Errorf("rendered file is empty or too short (got %.1fs of %.1fs)", pr.DurationSec, wantSec)
+	}
+	return nil
 }
 
 // moveFile renames, falling back to copy across filesystems.
