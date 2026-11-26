@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -533,23 +535,66 @@ func (s *Server) serveClipFile(c *gin.Context) {
 	c.Header("Content-Type", ctype)
 	c.Header("Cache-Control", "private, no-cache")
 	if c.Query("download") == "1" {
-		c.FileAttachment(p, name)
+		c.Header("Content-Disposition", contentDisposition(name))
+		http.ServeFile(c.Writer, c.Request, p)
 		return
 	}
 	c.File(p)
 }
 
-var unsafeRe = regexp.MustCompile(`[^A-Za-z0-9._ -]+`)
-
-func safeName(s string) string {
-	s = strings.TrimSpace(unsafeRe.ReplaceAllString(s, ""))
+// safeName turns a clip title into a file name: it keeps Unicode letters and
+// ordinary punctuation, removing only characters that are illegal or risky
+// in file names on common systems.
+func safeName(title string) string {
+	var b strings.Builder
+	for _, r := range title {
+		switch {
+		case unicode.IsControl(r), strings.ContainsRune(`<>:"/\|?*`, r):
+			b.WriteRune(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	s := strings.Join(strings.Fields(b.String()), " ")
+	if r := []rune(s); len(r) > 80 {
+		s = string(r[:80])
+	}
+	s = strings.Trim(s, " .")
 	if s == "" {
 		return "clip"
 	}
-	if len(s) > 80 {
-		s = s[:80]
-	}
 	return s
+}
+
+// contentDisposition builds an RFC 6266 attachment header with an ASCII
+// fallback name plus the exact UTF-8 name.
+func contentDisposition(name string) string {
+	ext := filepath.Ext(name)
+	var ascii strings.Builder
+	for _, r := range strings.TrimSuffix(name, ext) {
+		if r >= 0x20 && r < 0x7f && r != '"' && r != '\\' {
+			ascii.WriteRune(r)
+		}
+	}
+	fallback := strings.Trim(strings.Join(strings.Fields(ascii.String()), " "), " .")
+	if fallback == "" {
+		fallback = "clip"
+	}
+	return `attachment; filename="` + fallback + ext + `"; filename*=UTF-8''` + rfc5987(name)
+}
+
+// rfc5987 percent-encodes everything outside RFC 5987 attr-char.
+func rfc5987(s string) string {
+	const ok = "!#$&+-.^_`|~"
+	var b strings.Builder
+	for _, c := range []byte(s) {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || strings.IndexByte(ok, c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%%%02X", c)
+		}
+	}
+	return b.String()
 }
 
 // ---------- suggestions ----------

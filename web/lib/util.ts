@@ -41,3 +41,16 @@ export function wordIndexAt(words: { s: number }[], t: number): number {
   }
   return ans;
 }
+
+// fileBase mirrors safeName in the Go API: a clip title as a file name,
+// dropping only characters that are illegal in file names.
+export function fileBase(title: string): string {
+  const cleaned = Array.from(title)
+    .map((ch) => (/[\u0000-\u001f\u007f<>:"/\\|?*]/.test(ch) ? " " : ch))
+    .join("")
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ");
+  const s = Array.from(cleaned).slice(0, 80).join("").replace(/^[ .]+|[ .]+$/g, "");
+  return s || "clip";
+}
