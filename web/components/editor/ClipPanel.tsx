@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Download, Film, Loader2, Play, Save, Send, Sparkles, Trash2, Type } from "lucide-react";
 import { api, type Aspect, type CaptionStyle, type Clip, type Integration, type Publication, type Word } from "@/lib/api";
 import { ProgressBar, StatusBadge } from "@/components/Shell";
-import { cn, fmtTime, parseTime } from "@/lib/util";
+import { cn, fileBase, fmtTime, parseTime } from "@/lib/util";
 
 function TimeInput({ label, ms, onChange, onFromPlayhead }: { label: string; ms: number; onChange: (ms: number) => void; onFromPlayhead: () => void }) {
   const [text, setText] = useState(fmtTime(ms, true));
@@ -204,10 +204,10 @@ export function ClipPanel({
             className={cn("mx-auto max-h-[420px] rounded bg-black", saved.aspect === "16:9" ? "w-full" : "h-[420px]")}
           />
           <div className="flex gap-2">
-            <a className="btn-ghost flex-1 justify-center" href={api.clipFile(saved.id, "mp4", true, version)}>
+            <a className="btn-ghost flex-1 justify-center" href={api.clipFile(saved.id, "mp4", true, version)} download={`${fileBase(saved.title)}.mp4`}>
               <Download size={14} /> MP4
             </a>
-            <a className="btn-ghost flex-1 justify-center" href={api.clipFile(saved.id, "srt", true, version)}>
+            <a className="btn-ghost flex-1 justify-center" href={api.clipFile(saved.id, "srt", true, version)} download={`${fileBase(saved.title)}.srt`}>
               <Download size={14} /> SRT
             </a>
           </div>
