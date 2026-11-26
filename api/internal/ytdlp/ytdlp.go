@@ -211,6 +211,19 @@ func (c *Client) proxyArgs(rawURL, out string, height int, extra []string) []str
 // SourceFormat picks the best rendition up to 1080p for final renders.
 const SourceFormat = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
 
+// TwitchFormat picks one muxed variant: every Twitch quality already carries
+// audio, and pairing it with the separate audio_only playlist only adds a
+// second input that can come back without video.
+const TwitchFormat = "b[height<=1080]/b"
+
+// FormatFor returns the yt-dlp format selector for a source URL.
+func FormatFor(rawURL string) string {
+	if _, platform, err := ValidateURL(rawURL); err == nil && platform == "twitch" {
+		return TwitchFormat
+	}
+	return SourceFormat
+}
+
 // StreamInput is a direct media URL ffmpeg can read, with request headers.
 type StreamInput struct {
 	URL     string
@@ -220,7 +233,7 @@ type StreamInput struct {
 // ResolveStreams returns direct URLs (video+audio, or a single muxed URL)
 // for SourceFormat, letting ffmpeg seek precisely without downloading the VOD.
 func (c *Client) ResolveStreams(ctx context.Context, rawURL string) ([]StreamInput, *Info, error) {
-	info, err := c.Probe(ctx, rawURL, SourceFormat)
+	info, err := c.Probe(ctx, rawURL, FormatFor(rawURL))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -248,7 +261,7 @@ func (c *Client) DownloadSection(ctx context.Context, rawURL, dir string, startS
 	out := filepath.Join(dir, "section.%(ext)s")
 	err := c.withClients(rawURL, func(extra []string) error {
 		return c.run(ctx, append(append(c.baseArgs(), extra...),
-			"-f", SourceFormat,
+			"-f", FormatFor(rawURL),
 			"--download-sections", fmt.Sprintf("*%.3f-%.3f", startSec, endSec),
 			"--force-keyframes-at-cuts",
 			"--merge-output-format", "mkv",

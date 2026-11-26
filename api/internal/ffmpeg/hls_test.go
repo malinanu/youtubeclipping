@@ -3,6 +3,7 @@ package ffmpeg
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -120,5 +121,81 @@ func TestRenderArgsLocalPlaylistHasNoHeaders(t *testing.T) {
 	remote := strings.Join(r.RenderArgs(RenderOptions{Inputs: []Input{{Path: "https://x/v.mp4", Headers: h}}, DurSec: 5, Output: "o.mp4"}), " ")
 	if !strings.Contains(remote, "-headers") {
 		t.Fatalf("remote args: %s", remote)
+	}
+}
+
+// makeEventHLS writes a 60s Twitch-like HLS (EVENT, no ENDLIST, ts offset 10s).
+func makeEventHLS(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30:duration=60",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=60",
+		"-c:v", "libx264", "-preset", "ultrafast", "-g", "60", "-c:a", "aac",
+		"-output_ts_offset", "10", "-f", "hls", "-hls_time", "10", "-hls_playlist_type", "event",
+		filepath.Join(dir, "index.m3u8"))
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("gen: %v %s", err, out)
+	}
+	pl, _ := os.ReadFile(filepath.Join(dir, "index.m3u8"))
+	_ = os.WriteFile(filepath.Join(dir, "index.m3u8"), []byte(strings.ReplaceAll(string(pl), "#EXT-X-ENDLIST\n", "")), 0o644)
+	return dir
+}
+
+func TestDownloadHLSSectionRender(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	dir := makeEventHLS(t)
+	var ua string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua = r.Header.Get("User-Agent")
+		http.FileServer(http.Dir(dir)).ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	work := t.TempDir()
+	p, off, n, err := DownloadHLSSection(context.Background(), srv.Client(),
+		Input{Path: srv.URL + "/index.m3u8", Headers: map[string]string{"User-Agent": "cf-test"}}, 33, 8, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off != 3 || n == 0 || ua != "cf-test" || !strings.HasSuffix(p, ".ts") {
+		t.Fatalf("off=%v bytes=%d ua=%q path=%s", off, n, ua, p)
+	}
+	r := &Runner{FFmpeg: "ffmpeg", FFprobe: "ffprobe"}
+	out := filepath.Join(work, "out.mp4")
+	if err := r.Render(context.Background(), RenderOptions{Inputs: []Input{{Path: p}}, StartSec: off, DurSec: 8,
+		Aspect: "9:16", CropX: 0.5, Output: out, Preset: "ultrafast"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	pr, err := r.Probe(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.Width == 0 || !pr.HasAudio || pr.DurationSec < 7.5 || pr.DurationSec > 8.5 {
+		t.Fatalf("unexpected output %+v", pr)
+	}
+}
+
+func TestDownloadHLSSectionErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/index.m3u8":
+			_, _ = io.WriteString(w, mediaPlaylist(5, ""))
+		case "/enc.m3u8":
+			_, _ = io.WriteString(w, mediaPlaylist(5, `#EXT-X-KEY:METHOD=AES-128,URI="k.key"`+"\n"))
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer srv.Close()
+	_, _, _, err := DownloadHLSSection(context.Background(), srv.Client(), Input{Path: srv.URL + "/index.m3u8"}, 12, 5, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "segment 1/") || !strings.Contains(err.Error(), "1.ts") || !strings.Contains(err.Error(), "http 404") {
+		t.Fatalf("err=%v", err)
+	}
+	_, _, _, err = DownloadHLSSection(context.Background(), srv.Client(), Input{Path: srv.URL + "/enc.m3u8"}, 12, 5, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "encrypted") {
+		t.Fatalf("err=%v", err)
 	}
 }
