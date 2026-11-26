@@ -87,7 +87,8 @@ func TestTrimHLSRender(t *testing.T) {
 	defer srv.Close()
 
 	work := t.TempDir()
-	in, off, err := TrimHLS(context.Background(), srv.Client(), Input{Path: srv.URL + "/index.m3u8"}, 33, 8, work)
+	in, off, err := TrimHLS(context.Background(), srv.Client(), Input{Path: srv.URL + "/index.m3u8",
+		Headers: map[string]string{"User-Agent": "x", "Referer": "https://www.twitch.tv/"}}, 33, 8, work)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,5 +107,18 @@ func TestTrimHLSRender(t *testing.T) {
 	}
 	if pr.Width == 0 || !pr.HasAudio || pr.DurationSec < 7.5 || pr.DurationSec > 8.5 {
 		t.Fatalf("unexpected output %+v", pr)
+	}
+}
+
+func TestRenderArgsLocalPlaylistHasNoHeaders(t *testing.T) {
+	r := &Runner{}
+	h := map[string]string{"User-Agent": "x"}
+	local := strings.Join(r.RenderArgs(RenderOptions{Inputs: []Input{{Path: "/tmp/w/trim.m3u8", Headers: h}}, DurSec: 5, Output: "o.mp4"}), " ")
+	if strings.Contains(local, "-headers") || !strings.Contains(local, "file,http,https") {
+		t.Fatalf("local playlist args: %s", local)
+	}
+	remote := strings.Join(r.RenderArgs(RenderOptions{Inputs: []Input{{Path: "https://x/v.mp4", Headers: h}}, DurSec: 5, Output: "o.mp4"}), " ")
+	if !strings.Contains(remote, "-headers") {
+		t.Fatalf("remote args: %s", remote)
 	}
 }

@@ -102,10 +102,9 @@ func (r *Runner) RenderArgs(o RenderOptions) []string {
 	for _, in := range o.Inputs {
 		if !in.remote() && strings.HasSuffix(strings.ToLower(in.Path), ".m3u8") {
 			// Local playlist written by TrimHLS: segments are remote http(s) URLs.
+			// No -headers here: it is an http protocol option, and ffmpeg 7+
+			// rejects it on a file input ("Option headers not found").
 			args = append(args, "-protocol_whitelist", "file,http,https,tcp,tls,crypto")
-			if len(in.Headers) > 0 {
-				args = append(args, "-headers", headerBlock(in.Headers))
-			}
 		}
 		if in.remote() {
 			// Never let a remote playlist pull local files or odd protocols.
