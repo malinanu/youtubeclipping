@@ -487,16 +487,26 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		if err := h.FF.Render(ctx, opts, progress(0, 0.95)); err != nil {
 			return fail(err)
 		}
+		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
+			return fail(err)
+		}
 		return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
 	}
 
 	// 1) Stream directly from the platform with an accurate seek (single encode).
 	streams, _, rerr := h.YtDlp.ResolveStreams(ctx, v.SourceURL)
 	if rerr == nil {
+		direct := opts
 		for _, s := range streams {
-			opts.Inputs = append(opts.Inputs, ffmpeg.Input{Path: s.URL, Headers: s.Headers})
+			direct.Inputs = append(direct.Inputs, ffmpeg.Input{Path: s.URL, Headers: s.Headers})
 		}
-		rerr = h.FF.Render(ctx, opts, progress(0, 0.95))
+		h.trimHLSInputs(ctx, c.ID, &direct, work)
+		rerr = h.FF.Render(ctx, direct, progress(0, 0.95))
+		if rerr == nil {
+			// ffmpeg can exit 0 with no frames (e.g. a remote input ends early
+			// and -shortest cuts everything); treat that as a failed attempt.
+			rerr = h.checkOutput(ctx, tmpOut, durSec)
+		}
 	}
 	// 2) Fallback: let yt-dlp download just the section, then encode locally.
 	if rerr != nil {
@@ -511,9 +521,65 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		if err := h.FF.Render(ctx, opts, progress(0.5, 0.45)); err != nil {
 			return fail(err)
 		}
+		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
+			return fail(err)
+		}
 	}
 
 	return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
+}
+
+// trimHLSInputs replaces remote HLS playlists with local playlists holding only
+// the segments of this clip, so ffmpeg never seeks inside a long (often
+// EVENT-type) Twitch playlist. On failure the inputs are left unchanged.
+func (h *Handlers) trimHLSInputs(ctx context.Context, clipID string, o *ffmpeg.RenderOptions, work string) {
+	if len(o.Inputs) == 0 || !o.Inputs[0].IsHLS() {
+		return
+	}
+	trimmed := make([]ffmpeg.Input, len(o.Inputs))
+	offset := 0.0
+	for i, in := range o.Inputs {
+		if !in.IsHLS() {
+			h.Log.Warn("hls trim skipped: mixed inputs", "clip", clipID)
+			return
+		}
+		dir := filepath.Join(work, fmt.Sprintf("hls%d", i))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return
+		}
+		tctx, cancel := context.WithTimeout(ctx, time.Minute)
+		t, off, err := ffmpeg.TrimHLS(tctx, nil, in, o.StartSec, o.DurSec, dir)
+		cancel()
+		if err != nil {
+			h.Log.Warn("hls trim failed, seeking in the full playlist", "clip", clipID, "err", err)
+			return
+		}
+		if i == 0 {
+			offset = off
+		}
+		trimmed[i] = t
+	}
+	o.Inputs, o.StartSec = trimmed, offset
+}
+
+// checkOutput rejects a render that ffmpeg reported as successful but that has
+// no video or is much shorter than the clip.
+func (h *Handlers) checkOutput(ctx context.Context, path string, wantSec float64) error {
+	pr, err := h.FF.Probe(ctx, path)
+	if err != nil {
+		return fmt.Errorf("rendered file is unreadable: %w", err)
+	}
+	return outputOK(pr, wantSec)
+}
+
+func outputOK(pr *ffmpeg.ProbeResult, wantSec float64) error {
+	if pr == nil || pr.Width <= 0 || pr.VideoCodec == "" {
+		return errors.New("rendered file has no video stream")
+	}
+	if pr.DurationSec < max(1, 0.8*wantSec) {
+		return fmt.Errorf("rendered file is empty or too short (got %.1fs of %.1fs)", pr.DurationSec, wantSec)
+	}
+	return nil
 }
 
 // moveFile renames, falling back to copy across filesystems.

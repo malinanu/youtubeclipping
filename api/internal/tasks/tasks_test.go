@@ -7,6 +7,7 @@ import (
 	"github.com/hibiken/asynq"
 
 	"github.com/malinanu/youtubeclipping/api/internal/config"
+	"github.com/malinanu/youtubeclipping/api/internal/ffmpeg"
 	"github.com/malinanu/youtubeclipping/api/internal/store"
 )
 
@@ -44,6 +45,23 @@ func TestAutoSuggest(t *testing.T) {
 	}
 	if Resolve(cfg, &store.Settings{GeminiAPIKey: "g", AIProvider: "claude"}).HasAIKey() {
 		t.Fatal("forced claude without its key has no usable key")
+	}
+}
+
+func TestOutputOK(t *testing.T) {
+	good := &ffmpeg.ProbeResult{DurationSec: 30, Width: 1080, Height: 1920, VideoCodec: "h264"}
+	if err := outputOK(good, 32); err != nil {
+		t.Fatal(err)
+	}
+	for name, pr := range map[string]*ffmpeg.ProbeResult{
+		"nil":      nil,
+		"no video": {DurationSec: 30, HasAudio: true},
+		"empty":    {DurationSec: 0, Width: 1080, VideoCodec: "h264"},
+		"short":    {DurationSec: 10, Width: 1080, VideoCodec: "h264"},
+	} {
+		if outputOK(pr, 32) == nil {
+			t.Fatalf("%s: want error", name)
+		}
 	}
 }
 
