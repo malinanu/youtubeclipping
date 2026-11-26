@@ -146,3 +146,12 @@ func TestReloadErrorFallsBack(t *testing.T) {
 		t.Fatalf("reload error should fall back to tv client: %v", err)
 	}
 }
+
+func TestFormatFor(t *testing.T) {
+	if FormatFor("https://www.twitch.tv/videos/123") != TwitchFormat {
+		t.Fatal("twitch should use the muxed format")
+	}
+	if FormatFor("https://www.youtube.com/watch?v=abc") != SourceFormat {
+		t.Fatal("youtube should use the source format")
+	}
+}

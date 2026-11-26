@@ -123,7 +123,7 @@ func (r *Runner) RenderArgs(o RenderOptions) []string {
 	}
 	args = append(args, "-map", "0:v:0")
 	if len(o.Inputs) > 1 {
-		args = append(args, "-map", "1:a:0")
+		args = append(args, "-map", "1:a:0?")
 	} else {
 		args = append(args, "-map", "0:a:0?")
 	}

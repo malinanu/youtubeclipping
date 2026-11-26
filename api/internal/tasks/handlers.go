@@ -484,10 +484,7 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 			return fail(fmt.Errorf("%w: %v", asynq.SkipRetry, err))
 		}
 		opts.Inputs = []ffmpeg.Input{{Path: src}}
-		if err := h.FF.Render(ctx, opts, progress(0, 0.95)); err != nil {
-			return fail(err)
-		}
-		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
+		if err := h.renderChecked(ctx, opts, progress(0, 0.95)); err != nil {
 			return fail(err)
 		}
 		return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
@@ -500,12 +497,15 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		for _, s := range streams {
 			direct.Inputs = append(direct.Inputs, ffmpeg.Input{Path: s.URL, Headers: s.Headers})
 		}
-		h.trimHLSInputs(ctx, c.ID, &direct, work)
-		rerr = h.FF.Render(ctx, direct, progress(0, 0.95))
+		if allHLS(direct.Inputs) {
+			// HLS (Twitch): fetch only this clip's segments ourselves and render
+			// locally. ffmpeg reading long EVENT playlists over the network
+			// silently produces empty or video-less output.
+			h.clipStatus(ctx, c, "rendering", 0.02, "", false)
+			rerr = h.downloadHLSInputs(ctx, c.ID, &direct, work)
+		}
 		if rerr == nil {
-			// ffmpeg can exit 0 with no frames (e.g. a remote input ends early
-			// and -shortest cuts everything); treat that as a failed attempt.
-			rerr = h.checkOutput(ctx, tmpOut, durSec)
+			rerr = h.renderChecked(ctx, direct, progress(0.1, 0.85))
 		}
 	}
 	// 2) Fallback: let yt-dlp download just the section, then encode locally.
@@ -518,48 +518,108 @@ func (h *Handlers) Render(ctx context.Context, t *asynq.Task) error {
 		}
 		opts.Inputs = []ffmpeg.Input{{Path: sec}}
 		opts.StartSec = 0
-		if err := h.FF.Render(ctx, opts, progress(0.5, 0.45)); err != nil {
-			return fail(err)
-		}
-		if err := h.checkOutput(ctx, tmpOut, durSec); err != nil {
-			return fail(err)
+		if err := h.renderChecked(ctx, opts, progress(0.5, 0.45)); err != nil {
+			return fail(fmt.Errorf("stream: %v; section: %w", rerr, err))
 		}
 	}
 
 	return h.finishRender(ctx, c, tmpOut, outDir, words, durSec, fail)
 }
 
-// trimHLSInputs replaces remote HLS playlists with local playlists holding only
-// the segments of this clip, so ffmpeg never seeks inside a long (often
-// EVENT-type) Twitch playlist. On failure the inputs are left unchanged.
-func (h *Handlers) trimHLSInputs(ctx context.Context, clipID string, o *ffmpeg.RenderOptions, work string) {
-	if len(o.Inputs) == 0 || !o.Inputs[0].IsHLS() {
-		return
+func allHLS(ins []ffmpeg.Input) bool {
+	for _, in := range ins {
+		if !in.IsHLS() {
+			return false
+		}
 	}
-	trimmed := make([]ffmpeg.Input, len(o.Inputs))
+	return len(ins) > 0
+}
+
+// downloadHLSInputs replaces each remote HLS input with a local file holding
+// just the segments of this clip, and sets the seek offset into it.
+func (h *Handlers) downloadHLSInputs(ctx context.Context, clipID string, o *ffmpeg.RenderOptions, work string) error {
+	local := make([]ffmpeg.Input, len(o.Inputs))
 	offset := 0.0
 	for i, in := range o.Inputs {
-		if !in.IsHLS() {
-			h.Log.Warn("hls trim skipped: mixed inputs", "clip", clipID)
-			return
-		}
 		dir := filepath.Join(work, fmt.Sprintf("hls%d", i))
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return
+			return err
 		}
-		tctx, cancel := context.WithTimeout(ctx, time.Minute)
-		t, off, err := ffmpeg.TrimHLS(tctx, nil, in, o.StartSec, o.DurSec, dir)
+		dctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+		p, off, n, err := ffmpeg.DownloadHLSSection(dctx, nil, in, o.StartSec, o.DurSec, dir)
 		cancel()
 		if err != nil {
-			h.Log.Warn("hls trim failed, seeking in the full playlist", "clip", clipID, "err", err)
-			return
+			return err
 		}
+		h.Log.Info("hls section downloaded", "clip", clipID, "input", i, "bytes", n, "offset", off)
 		if i == 0 {
 			offset = off
 		}
-		trimmed[i] = t
+		local[i] = ffmpeg.Input{Path: p}
 	}
-	o.Inputs, o.StartSec = trimmed, offset
+	o.Inputs, o.StartSec = local, offset
+	return nil
+}
+
+// renderChecked probes local inputs (video input first; error if none has
+// video), renders, and verifies the output.
+func (h *Handlers) renderChecked(ctx context.Context, o ffmpeg.RenderOptions, onProgress func(float64)) error {
+	if allLocal(o.Inputs) {
+		probes := make([]*ffmpeg.ProbeResult, len(o.Inputs))
+		for i, in := range o.Inputs {
+			pr, err := h.FF.Probe(ctx, in.Path)
+			if err != nil {
+				return fmt.Errorf("source section is unreadable: %w", err)
+			}
+			probes[i] = pr
+		}
+		order, err := videoFirst(probes)
+		if err != nil {
+			return err
+		}
+		ins := make([]ffmpeg.Input, len(order))
+		for i, j := range order {
+			ins[i] = o.Inputs[j]
+		}
+		o.Inputs = ins
+	}
+	if err := h.FF.Render(ctx, o, onProgress); err != nil {
+		return err
+	}
+	// ffmpeg can exit 0 with no frames (e.g. a remote input ends early and
+	// -shortest cuts everything); treat that as a failure.
+	return h.checkOutput(ctx, o.Output, o.DurSec)
+}
+
+func allLocal(ins []ffmpeg.Input) bool {
+	for _, in := range ins {
+		if strings.HasPrefix(in.Path, "http://") || strings.HasPrefix(in.Path, "https://") {
+			return false
+		}
+	}
+	return true
+}
+
+// videoFirst returns an input order with a video-bearing input first.
+func videoFirst(probes []*ffmpeg.ProbeResult) ([]int, error) {
+	order := make([]int, 0, len(probes))
+	v := -1
+	for i, p := range probes {
+		if p != nil && p.Width > 0 && p.VideoCodec != "" {
+			v = i
+			break
+		}
+	}
+	if v < 0 {
+		return nil, errors.New("source section has no video stream (the platform returned audio only)")
+	}
+	order = append(order, v)
+	for i := range probes {
+		if i != v {
+			order = append(order, i)
+		}
+	}
+	return order, nil
 }
 
 // checkOutput rejects a render that ffmpeg reported as successful but that has
