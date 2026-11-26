@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/malinanu/youtubeclipping/api/internal/media"
 )
 
 const geminiOK = `{"candidates":[{"content":{"role":"model","parts":[
@@ -115,5 +118,113 @@ func TestParseResponseCodeFence(t *testing.T) {
 	got, err := ParseResponse("```json\n{\"clips\":[{\"start\":1,\"end\":30,\"title\":\"x\",\"hook\":\"\",\"reason\":\"\",\"score\":5}]}\n```")
 	if err != nil || len(got) != 1 {
 		t.Fatalf("%v %+v", err, got)
+	}
+}
+
+func TestListGeminiModels(t *testing.T) {
+	var pages int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" || r.Header.Get("x-goog-api-key") != "gk" {
+			t.Errorf("path=%s key=%s", r.URL.Path, r.Header.Get("x-goog-api-key"))
+		}
+		atomic.AddInt32(&pages, 1)
+		if r.URL.Query().Get("pageToken") == "" {
+			_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-z","supportedGenerationMethods":["generateContent"]},
+				{"name":"models/embed-1","supportedGenerationMethods":["embedContent"]}],"nextPageToken":"p2"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"models":[{"name":"models/gemini-a","supportedGenerationMethods":["countTokens","generateContent"]}]}`)
+	}))
+	defer srv.Close()
+	got, err := ListGeminiModels(context.Background(), srv.URL, "gk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, ",") != "gemini-a,gemini-z" || pages != 2 {
+		t.Fatalf("got %v pages=%d", got, pages)
+	}
+}
+
+func TestGeminiModelNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = io.WriteString(w, `{"error":{"code":404,"message":"models/bad is not found for API version v1beta","status":"NOT_FOUND"}}`)
+	}))
+	defer srv.Close()
+	_, err := Suggest(context.Background(), Options{Provider: ProviderGemini, APIKey: "gk", BaseURL: srv.URL, Model: "bad",
+		MinSec: 20, MaxSec: 60, Count: 3}, mkWords(200))
+	if err == nil || !strings.Contains(err.Error(), `model "bad" not found`) || !IsPermanent(err) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// longWords returns one word every 500 ms for the given number of minutes.
+func longWords(minutes int) []media.Word {
+	return mkWords(minutes * 120)
+}
+
+func clipJSON(start, end float64) string {
+	inner := fmt.Sprintf(`{\"clips\":[{\"start\":%g,\"end\":%g,\"title\":\"c\",\"hook\":\"h\",\"reason\":\"r\",\"score\":70}]}`, start, end)
+	return `{"candidates":[{"content":{"parts":[{"text":"` + inner + `"}]},"finishReason":"STOP"}]}`
+}
+
+const geminiEmpty = `{"candidates":[{"content":{"parts":[{"text":"{\"clips\":[]}"}]},"finishReason":"STOP"}]}`
+
+func TestSuggestScansTenMinuteSections(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch calls.Add(1) {
+		case 1, 2:
+			_, _ = io.WriteString(w, geminiEmpty) // nothing in 0-10 and 10-20 min
+		default:
+			_, _ = io.WriteString(w, clipJSON(1300, 1330)) // a clip at ~21:40
+		}
+	}))
+	defer srv.Close()
+	var prog []Progress
+	var st Stats
+	out, err := Suggest(context.Background(), Options{Provider: ProviderGemini, APIKey: "k", BaseURL: srv.URL,
+		MinSec: 20, MaxSec: 60, Count: 1, OnProgress: func(p Progress) { prog = append(prog, p) }, Stats: &st}, longWords(35))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || calls.Load() != 3 {
+		t.Fatalf("out=%+v calls=%d (want stop after 3rd section)", out, calls.Load())
+	}
+	if st.Windows != 4 || st.Scanned != 3 || len(prog) != 3 || prog[2].FromSec != 1200 || prog[2].Found != 1 {
+		t.Fatalf("stats=%+v prog=%+v", st, prog)
+	}
+}
+
+func TestSuggestSkipsBusySections(t *testing.T) {
+	old := geminiRetryUnit
+	geminiRetryUnit = time.Millisecond
+	defer func() { geminiRetryUnit = old }()
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if calls.Load() <= 10 {
+			w.WriteHeader(503) // first section: 5 tries on the chosen model + 5 on the default
+			return
+		}
+		_, _ = io.WriteString(w, clipJSON(700, 730))
+	}))
+	defer srv.Close()
+	var st Stats
+	out, err := Suggest(context.Background(), Options{Provider: ProviderGemini, APIKey: "k", BaseURL: srv.URL, Model: "gemini-busy",
+		MinSec: 20, MaxSec: 60, Count: 1, Stats: &st}, longWords(25))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || st.Skipped != 1 || st.Scanned != 2 {
+		t.Fatalf("out=%+v stats=%+v", out, st)
+	}
+
+	// Every section busy: the error surfaces.
+	calls.Store(-1000)
+	if _, err := Suggest(context.Background(), Options{Provider: ProviderGemini, APIKey: "k", BaseURL: srv.URL,
+		MinSec: 20, MaxSec: 60, Count: 1}, longWords(5)); err == nil || IsPermanent(err) {
+		t.Fatalf("want transient error, got %v", err)
 	}
 }

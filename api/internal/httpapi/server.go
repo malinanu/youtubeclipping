@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/malinanu/youtubeclipping/api/internal/auth"
 	"github.com/malinanu/youtubeclipping/api/internal/config"
 	"github.com/malinanu/youtubeclipping/api/internal/events"
+	"github.com/malinanu/youtubeclipping/api/internal/llm"
 	"github.com/malinanu/youtubeclipping/api/internal/media"
 	"github.com/malinanu/youtubeclipping/api/internal/postiz"
 	"github.com/malinanu/youtubeclipping/api/internal/store"
@@ -94,6 +96,7 @@ func (s *Server) Router() *gin.Engine {
 	p.PUT("/settings", s.putSettings)
 	p.POST("/settings/cookies", s.uploadCookies)
 	p.POST("/settings/youtube-test", s.youtubeTest)
+	p.GET("/settings/gemini-models", s.geminiModels)
 	p.DELETE("/settings/cookies", s.deleteCookies)
 	p.GET("/postiz/integrations", s.postizIntegrations)
 	return r
@@ -790,6 +793,22 @@ func (s *Server) putSettings(c *gin.Context) {
 		bad(c, "aiProvider must be auto, claude or gemini")
 		return
 	}
+	next.GeminiModel = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(next.GeminiModel), "models/"))
+	if next.GeminiModel != "" && next.GeminiModel != cur.GeminiModel {
+		if key := tasks.Resolve(s.Cfg, &next).GeminiAPIKey; key != "" {
+			lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			models, lerr := llm.ListGeminiModels(lctx, "", key)
+			cancel()
+			if lerr == nil && len(models) > 0 && !slices.Contains(models, next.GeminiModel) {
+				ex := models
+				if len(ex) > 5 {
+					ex = ex[:5]
+				}
+				bad(c, fmt.Sprintf("unknown Gemini model %q for this key; available include: %s", next.GeminiModel, strings.Join(ex, ", ")))
+				return
+			}
+		}
+	}
 	if !regexp.MustCompile(`^[A-Za-z0-9._\-]*$`).MatchString(next.GeminiModel + next.ClaudeModel) {
 		bad(c, "invalid model name")
 		return
@@ -878,6 +897,27 @@ func (s *Server) youtubeTest(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"ok": true, "cookiesUsed": cookiesUsed, "title": info.Title})
+}
+
+func (s *Server) geminiModels(c *gin.Context) {
+	st, err := s.Store.GetSettings(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	key := tasks.Resolve(s.Cfg, st).GeminiAPIKey
+	if key == "" {
+		bad(c, "Gemini API key not set")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+	models, err := llm.ListGeminiModels(ctx, "", key)
+	if err != nil {
+		c.JSON(502, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"models": models})
 }
 
 func (s *Server) deleteCookies(c *gin.Context) {

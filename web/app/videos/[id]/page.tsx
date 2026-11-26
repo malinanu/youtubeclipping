@@ -23,7 +23,7 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
   const [tab, setTab] = useState<"transcript" | "clips">("transcript");
   const [markIn, setMarkIn] = useState<number | null>(null);
   const [markOut, setMarkOut] = useState<number | null>(null);
-  const [suggest, setSuggest] = useState<{ status: string; error?: string; count?: number }>({ status: "idle" });
+  const [suggest, setSuggest] = useState<{ status: string; stage?: string; error?: string; count?: number }>({ status: "idle" });
   const [suggestOpts, setSuggestOpts] = useState({ open: false, instructions: "", replace: true });
   const [error, setError] = useState("");
   const player = useRef<PlayerHandle>(null);
@@ -50,7 +50,7 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
       setClips((cs) => cs.map((c) => (c.id === e.id ? { ...c, status: e.status as Clip["status"], progress: e.progress, error: e.error ?? "" } : c)));
       if (e.status === "done" || e.status === "failed") api.clip(e.id).then((c) => setClips((cs) => cs.map((x) => (x.id === c.id ? c : x))));
     } else if (e.kind === "suggest") {
-      setSuggest({ status: e.status, error: e.error });
+      setSuggest({ status: e.status, stage: e.stage, error: e.error });
       if (e.status === "done") {
         loadClips();
         setTab("clips");
@@ -192,8 +192,9 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
               {suggestBusy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
               {suggestBusy ? "Finding highlights…" : "AI clips"}
             </button>
-            {suggest.status === "failed" && suggest.error && (
-              <p className="max-w-xs truncate text-xs text-red-400" title={suggest.error}>
+            {suggestBusy && suggest.stage && <p className="max-w-xs truncate text-xs text-muted" title={suggest.stage}>{suggest.stage}</p>}
+            {(suggest.status === "failed" || suggest.status === "done") && suggest.error && (
+              <p className={cn("max-w-xs truncate text-xs", suggest.status === "failed" ? "text-red-400" : "text-amber-400")} title={suggest.error}>
                 AI: {suggest.error}
               </p>
             )}
@@ -384,7 +385,9 @@ export default function VideoPage({ params }: { params: Promise<{ id: string }> 
                     </button>
                   </div>
                 )}
+                {suggestBusy && suggest.stage && <p className="text-xs text-muted">{suggest.stage}</p>}
                 {suggest.status === "failed" && <p className="text-xs text-red-400">{suggest.error}</p>}
+                {suggest.status === "done" && suggest.error && <p className="text-xs text-amber-400">{suggest.error}</p>}
               </div>
 
               {clips.length === 0 && <p className="p-6 text-center text-sm text-muted">No clips yet. Select text in the transcript, mark In/Out, or ask AI.</p>}
