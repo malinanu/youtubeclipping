@@ -95,6 +95,7 @@ type Effective struct {
 	SuggestMaxSec      int
 	SuggestCount       int
 	SuggestInstruction string
+	AutoSuggest        bool
 }
 
 func Resolve(cfg *config.Config, s *store.Settings) Effective {
@@ -132,6 +133,7 @@ func Resolve(cfg *config.Config, s *store.Settings) Effective {
 		SuggestMaxSec:      pickInt(s.SuggestMaxSec, 75),
 		SuggestCount:       pickInt(s.SuggestCount, 8),
 		SuggestInstruction: s.SuggestInstruction,
+		AutoSuggest:        s.AutoSuggest == nil || *s.AutoSuggest,
 	}
 }
 
@@ -148,6 +150,12 @@ func (e Effective) SuggestProvider() (provider, key, model string) {
 		return "gemini", e.GeminiAPIKey, e.GeminiModel
 	}
 	return "claude", e.AnthropicAPIKey, e.ClaudeModel
+}
+
+// HasAIKey reports whether the provider chosen by SuggestProvider has a key.
+func (e Effective) HasAIKey() bool {
+	_, key, _ := e.SuggestProvider()
+	return key != ""
 }
 
 // UsesLocalWhisper reports whether transcription may run whisper.cpp

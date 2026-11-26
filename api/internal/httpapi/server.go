@@ -730,7 +730,7 @@ func (s *Server) getSettings(c *gin.Context) {
 		"aiProvider": eff.AIProvider, "geminiModel": eff.GeminiModel,
 		"postizUrl":     eff.PostizURL,
 		"suggestMinSec": eff.SuggestMinSec, "suggestMaxSec": eff.SuggestMaxSec, "suggestCount": eff.SuggestCount,
-		"suggestInstructions": eff.SuggestInstruction,
+		"suggestInstructions": eff.SuggestInstruction, "autoSuggest": eff.AutoSuggest,
 		"secrets": gin.H{
 			"anthropicApiKey": mask(eff.AnthropicAPIKey), "openaiApiKey": mask(eff.OpenAIAPIKey),
 			"geminiApiKey": mask(eff.GeminiAPIKey),
@@ -767,6 +767,9 @@ func (s *Server) putSettings(c *gin.Context) {
 	next.OpenAIAPIKey = keep(in.OpenAIAPIKey, cur.OpenAIAPIKey)
 	next.GroqAPIKey = keep(in.GroqAPIKey, cur.GroqAPIKey)
 	next.PostizAPIKey = keep(in.PostizAPIKey, cur.PostizAPIKey)
+	if next.AutoSuggest == nil {
+		next.AutoSuggest = cur.AutoSuggest
+	}
 	for _, k := range in.ClearSecrets {
 		switch k {
 		case "anthropicApiKey":

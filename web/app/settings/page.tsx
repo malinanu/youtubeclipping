@@ -127,6 +127,10 @@ export default function SettingsPage() {
               <label className="label">Gemini model</label>
               <input className="input font-mono" value={s.geminiModel} onChange={(e) => set({ geminiModel: e.target.value })} placeholder="gemini-3.5-flash-lite" />
             </div>
+            <label className="col-span-2 flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={s.autoSuggest} onChange={(e) => set({ autoSuggest: e.target.checked })} />
+              Automatically suggest clips with AI after transcription
+            </label>
             <div>
               <label className="label">Number of clips</label>
               <input className="input" type="number" value={s.suggestCount} onChange={(e) => set({ suggestCount: Number(e.target.value) })} />

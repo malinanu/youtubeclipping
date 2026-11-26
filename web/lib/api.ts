@@ -86,6 +86,7 @@ export type Settings = {
   suggestMaxSec: number;
   suggestCount: number;
   suggestInstructions: string;
+  autoSuggest: boolean;
   secrets: Record<"anthropicApiKey" | "openaiApiKey" | "groqApiKey" | "postizApiKey" | "geminiApiKey", string>;
 };
 

@@ -30,6 +30,23 @@ func TestSuggestProvider(t *testing.T) {
 	}
 }
 
+func TestAutoSuggest(t *testing.T) {
+	cfg := &config.Config{AIProvider: "auto"}
+	off := false
+	if e := Resolve(cfg, &store.Settings{GeminiAPIKey: "g"}); !e.AutoSuggest || !e.HasAIKey() {
+		t.Fatal("auto-suggest should default on with a Gemini key")
+	}
+	if e := Resolve(cfg, &store.Settings{GeminiAPIKey: "g", AutoSuggest: &off}); e.AutoSuggest {
+		t.Fatal("auto-suggest should respect explicit off")
+	}
+	if Resolve(cfg, &store.Settings{}).HasAIKey() {
+		t.Fatal("no key configured")
+	}
+	if Resolve(cfg, &store.Settings{GeminiAPIKey: "g", AIProvider: "claude"}).HasAIKey() {
+		t.Fatal("forced claude without its key has no usable key")
+	}
+}
+
 func TestRetryableBotCheck(t *testing.T) {
 	bot := errors.New("yt-dlp probe: exit status 1: ERROR: [youtube] W7Ut51YeQ6U: Sign in to confirm you’re not a bot.")
 	if !errors.Is(retryable(bot), asynq.SkipRetry) {
