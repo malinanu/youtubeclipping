@@ -203,6 +203,8 @@ There are two ways to add the key:
 
 Once a key is set, suggestions run automatically when a transcript finishes, and the clips appear in the **Clips** tab. You can turn this off under **Settings → Automatically suggest clips with AI after transcription**. For videos that were already transcribed, click **AI clips** in the video header.
 
+How a run works: the transcript is scanned **10 minutes at a time** from the start, and the scan stops as soon as the target **Number of clips** is reached. The video header shows which section it's on. If the provider is busy (HTTP 503/429), each section is retried with backoff (5s, 15s, 30s, 60s), then retried on the default `gemini-3.5-flash-lite` model; if it still fails, that section is skipped and the scan continues. Use **Load models** next to *Gemini model* in Settings to pick a model your key can use. Saving an unknown model name is rejected.
+
 ## 9b. Uploading video files
 
 Instead of pasting a URL, you can use **Upload file** on the home page. This suits long streams you've downloaded and pre-cut yourself, or videos YouTube won't let the server fetch.

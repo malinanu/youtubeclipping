@@ -299,7 +299,8 @@ func (h *Handlers) Transcribe(ctx context.Context, t *asynq.Task) error {
 // ---------- suggest ----------
 
 type SuggestState struct {
-	Status string `json:"status"` // running|done|failed
+	Status string `json:"status"` // queued|running|done|failed
+	Stage  string `json:"stage,omitempty"`
 	Error  string `json:"error,omitempty"`
 	Count  int    `json:"count"`
 	At     int64  `json:"at"`
@@ -311,7 +312,7 @@ func (h *Handlers) setSuggest(ctx context.Context, videoID string, st SuggestSta
 	st.At = time.Now().Unix()
 	b, _ := json.Marshal(st)
 	h.Redis.Set(ctx, SuggestKey(videoID), b, 2*time.Hour)
-	h.Bus.Publish(ctx, events.Event{Kind: "suggest", ID: videoID, VideoID: videoID, Status: st.Status, Error: st.Error}, true)
+	h.Bus.Publish(ctx, events.Event{Kind: "suggest", ID: videoID, VideoID: videoID, Status: st.Status, Stage: st.Stage, Error: st.Error}, true)
 }
 
 func (h *Handlers) Suggest(ctx context.Context, t *asynq.Task) error {
@@ -328,13 +329,25 @@ func (h *Handlers) Suggest(ctx context.Context, t *asynq.Task) error {
 		h.setSuggest(ctx, v.ID, SuggestState{Status: "failed", Error: "transcript not available"})
 		return nil
 	}
-	h.setSuggest(ctx, v.ID, SuggestState{Status: "running"})
+	h.setSuggest(ctx, v.ID, SuggestState{Status: "running", Stage: "Scanning the first 10 minutes"})
 	eff := h.settings(ctx)
 	instr := strings.TrimSpace(strings.Join([]string{eff.SuggestInstruction, p.Instructions}, "\n"))
 	provider, key, model := eff.SuggestProvider()
+	var stats llm.Stats
 	sugg, err := llm.Suggest(ctx, llm.Options{
 		Provider: provider, APIKey: key, Model: model, VideoTitle: v.Title,
 		MinSec: eff.SuggestMinSec, MaxSec: eff.SuggestMaxSec, Count: eff.SuggestCount, Instructions: instr,
+		Stats: &stats,
+		OnProgress: func(pr llm.Progress) {
+			if pr.Window >= pr.Windows {
+				return
+			}
+			stage := fmt.Sprintf("Scanned %d/%d sections (up to %s) · %d clips found", pr.Window, pr.Windows, fmtClock(pr.ToSec), pr.Found)
+			if pr.Skipped > 0 {
+				stage += fmt.Sprintf(" · %d skipped (AI busy)", pr.Skipped)
+			}
+			h.setSuggest(ctx, v.ID, SuggestState{Status: "running", Stage: stage})
+		},
 	}, tr.Words)
 	if err != nil {
 		if llm.IsPermanent(err) || lastAttempt(ctx) {
@@ -364,8 +377,21 @@ func (h *Handlers) Suggest(ctx context.Context, t *asynq.Task) error {
 			return err
 		}
 	}
-	h.setSuggest(ctx, v.ID, SuggestState{Status: "done", Count: len(sugg)})
+	done := SuggestState{Status: "done", Count: len(sugg)}
+	if stats.Skipped > 0 {
+		done.Error = fmt.Sprintf("%d of %d sections skipped because the AI provider was busy; run again to retry them", stats.Skipped, stats.Scanned)
+	}
+	h.setSuggest(ctx, v.ID, done)
 	return nil
+}
+
+// fmtClock formats seconds as h:mm:ss or m:ss.
+func fmtClock(sec float64) string {
+	t := int(sec)
+	if t >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", t/3600, t/60%60, t%60)
+	}
+	return fmt.Sprintf("%d:%02d", t/60, t%60)
 }
 
 // ---------- render ----------

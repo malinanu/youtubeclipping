@@ -170,7 +170,7 @@ export const api = {
   suggest: (videoId: string, replace: boolean, instructions: string) =>
     request("POST", `/videos/${videoId}/suggest`, { replace, instructions }),
   suggestStatus: (videoId: string) =>
-    request<{ status: string; error?: string; count?: number }>("GET", `/videos/${videoId}/suggest`),
+    request<{ status: string; stage?: string; error?: string; count?: number }>("GET", `/videos/${videoId}/suggest`),
 
   styles: () => request<CaptionStyle[]>("GET", "/styles"),
   saveStyle: (s: Partial<CaptionStyle>) =>
@@ -184,6 +184,7 @@ export const api = {
     fd.append("file", file);
     return request<{ ok: boolean; youtubeCookies: number; twitchCookies: number; loggedIn: boolean; twitchLoggedIn: boolean; warning?: string }>("POST", "/settings/cookies", fd);
   },
+  geminiModels: () => request<{ models: string[] }>("GET", "/settings/gemini-models"),
   youtubeTest: () => request<{ ok: boolean; cookiesUsed: boolean; title?: string; error?: string }>("POST", "/settings/youtube-test"),
   deleteCookies: () => request("DELETE", "/settings/cookies"),
 

@@ -64,7 +64,7 @@ func (e *Enqueuer) Transcribe(ctx context.Context, videoID string) error {
 }
 
 func (e *Enqueuer) Suggest(ctx context.Context, p SuggestPayload) error {
-	return e.enqueue(ctx, TypeSuggest, p, asynq.Queue(QueueDefault), asynq.MaxRetry(1), asynq.Timeout(20*time.Minute))
+	return e.enqueue(ctx, TypeSuggest, p, asynq.Queue(QueueDefault), asynq.MaxRetry(1), asynq.Timeout(90*time.Minute))
 }
 
 func (e *Enqueuer) Render(ctx context.Context, clipID string) error {

@@ -15,10 +15,23 @@ export default function SettingsPage() {
   const [secrets, setSecrets] = useState<Record<SecretKey, string>>({ anthropicApiKey: "", openaiApiKey: "", groqApiKey: "", postizApiKey: "", geminiApiKey: "" });
   const [msg, setMsg] = useState("");
   const [cookieWarn, setCookieWarn] = useState("");
+  const [models, setModels] = useState<{ list: string[]; loading: boolean; error: string }>({ list: [], loading: false, error: "" });
+  async function loadModels() {
+    setModels((m) => ({ ...m, loading: true, error: "" }));
+    try {
+      const r = await api.geminiModels();
+      setModels({ list: r.models, loading: false, error: r.models.length ? "" : "No models support generateContent for this key" });
+    } catch (e) {
+      setModels({ list: [], loading: false, error: (e as Error).message });
+    }
+  }
   const [ytTest, setYtTest] = useState<null | "running" | { ok: boolean; cookiesUsed: boolean; title?: string; error?: string }>(null);
 
   useEffect(() => {
-    api.settings().then(setS);
+    api.settings().then((st) => {
+      setS(st);
+      if (st.secrets.geminiApiKey) loadModels();
+    });
     api.system().then(setSys).catch(() => {});
   }, []);
   if (!s) return <Shell>Loading…</Shell>;
@@ -125,7 +138,28 @@ export default function SettingsPage() {
             <div className="col-span-2">{secret("geminiApiKey", "Gemini API key", "Create one at aistudio.google.com → Get API key. Or set GEMINI_API_KEY in the environment.")}</div>
             <div className="col-span-2">
               <label className="label">Gemini model</label>
-              <input className="input font-mono" value={s.geminiModel} onChange={(e) => set({ geminiModel: e.target.value })} placeholder="gemini-3.5-flash-lite" />
+              <div className="flex gap-2">
+                <input
+                  className="input font-mono"
+                  list="gemini-models"
+                  value={s.geminiModel}
+                  onChange={(e) => set({ geminiModel: e.target.value })}
+                  placeholder="gemini-3.5-flash-lite"
+                />
+                <button type="button" className="btn-ghost shrink-0" disabled={models.loading} onClick={loadModels}>
+                  {models.loading ? "Loading…" : "Load models"}
+                </button>
+              </div>
+              <datalist id="gemini-models">
+                {models.list.map((m) => (
+                  <option key={m} value={m} />
+                ))}
+              </datalist>
+              {models.error ? (
+                <p className="mt-1 text-xs text-red-400">{models.error}</p>
+              ) : models.list.length > 0 ? (
+                <p className="mt-1 text-xs text-muted">{models.list.length} models available for your key. Pick one from the list.</p>
+              ) : null}
             </div>
             <label className="col-span-2 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={s.autoSuggest} onChange={(e) => set({ autoSuggest: e.target.checked })} />

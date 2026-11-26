@@ -43,6 +43,29 @@ type Options struct {
 	Count        int
 	Instructions string // optional user guidance, e.g. "focus on funny moments"
 	BaseURL      string // tests only
+
+	// WindowSec is the length of each transcript section sent to the model
+	// (default 600 = 10 minutes). Sections are scanned in order and the scan
+	// stops once Count clips are found.
+	WindowSec int
+	// OnProgress, if set, is called after each section.
+	OnProgress func(Progress)
+	// Stats, if set, receives scan statistics.
+	Stats *Stats
+}
+
+// Progress reports a finished section of the scan.
+type Progress struct {
+	Window, Windows int     // 1-based index of the section just scanned, total sections
+	FromSec, ToSec  float64 // section bounds
+	Found           int     // clips found so far (after de-duplication)
+	Skipped         int     // sections skipped so far because the provider was unavailable
+}
+
+// Stats summarises a scan.
+type Stats struct {
+	Scanned, Windows, Skipped int
+	LastSkipErr               error
 }
 
 var schema = map[string]any{
@@ -109,6 +132,30 @@ func windows(segs []media.Segment, maxChars int) [][]media.Segment {
 	return out
 }
 
+// timeWindows groups segments into consecutive sections of span ms by start
+// time. Sections that would still be too large for a request are split by size.
+func timeWindows(segs []media.Segment, span int64) [][]media.Segment {
+	var out [][]media.Segment
+	var cur []media.Segment
+	var curIdx int64 = -1
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, windows(cur, 400_000)...)
+		}
+		cur = nil
+	}
+	for _, s := range segs {
+		idx := s.Start / span
+		if idx != curIdx {
+			flush()
+			curIdx = idx
+		}
+		cur = append(cur, s)
+	}
+	flush()
+	return out
+}
+
 // completer sends one system+user prompt and returns the model's JSON text.
 type completer interface {
 	complete(ctx context.Context, system, user string) (string, error)
@@ -151,33 +198,77 @@ func Suggest(ctx context.Context, opt Options, words []media.Word) ([]Suggestion
 		return nil, fmt.Errorf("%w: unknown AI provider %q", ErrNoAPIKey, opt.Provider)
 	}
 
-	segs := media.BuildSegments(words)
-	wins := windows(segs, 400_000) // ~100k tokens per request
-	perWin := opt.Count
-	if len(wins) > 1 {
-		perWin = max(3, (opt.Count*2)/len(wins)+1)
+	if opt.WindowSec <= 0 {
+		opt.WindowSec = 600
+	}
+	stats := opt.Stats
+	if stats == nil {
+		stats = &Stats{}
 	}
 
-	var all []Suggestion
-	for _, w := range wins {
-		user := fmt.Sprintf("Video title: %s\n\nFind up to %d clips, each between %d and %d seconds long.\n",
-			opt.VideoTitle, perWin, opt.MinSec, opt.MaxSec)
+	segs := media.BuildSegments(words)
+	wins := timeWindows(segs, int64(opt.WindowSec)*1000)
+	stats.Windows = len(wins)
+
+	var all, result []Suggestion
+	for i, w := range wins {
+		need := opt.Count - len(result)
+		user := fmt.Sprintf("Video title: %s\n\nThis is one %d-minute section of a longer video (%s to %s). "+
+			"Find up to %d clips in this section, each between %d and %d seconds long. "+
+			"If nothing here works as a standalone clip, return an empty clips array.\n",
+			opt.VideoTitle, max(1, opt.WindowSec/60), clock(w[0].Start), clock(w[len(w)-1].End),
+			min(3, need), opt.MinSec, opt.MaxSec)
+		if len(wins) == 1 {
+			user = fmt.Sprintf("Video title: %s\n\nFind up to %d clips, each between %d and %d seconds long.\n",
+				opt.VideoTitle, need, opt.MinSec, opt.MaxSec)
+		}
 		if s := strings.TrimSpace(opt.Instructions); s != "" {
 			user += "Additional instructions from the editor: " + s + "\n"
 		}
 		user += "\n<transcript>\n" + formatTranscript(w) + "</transcript>"
 
-		text, err := llm.complete(ctx, systemPrompt, user)
+		got, err := completeAndParse(ctx, llm, user)
 		if err != nil {
-			return nil, err
+			if ctx.Err() != nil || IsPermanent(err) {
+				return nil, err
+			}
+			// Provider busy or a bad reply: skip this section and keep scanning.
+			stats.Skipped++
+			stats.LastSkipErr = err
+		} else {
+			all = append(all, got...)
+			result = Postprocess(all, words, opt.MinSec, opt.MaxSec, opt.Count)
 		}
-		got, err := ParseResponse(text)
-		if err != nil {
-			return nil, err
+		stats.Scanned = i + 1
+		if opt.OnProgress != nil {
+			opt.OnProgress(Progress{Window: i + 1, Windows: len(wins), FromSec: float64(w[0].Start) / 1000,
+				ToSec: float64(w[len(w)-1].End) / 1000, Found: len(result), Skipped: stats.Skipped})
 		}
-		all = append(all, got...)
+		if len(result) >= opt.Count {
+			break
+		}
 	}
-	return Postprocess(all, words, opt.MinSec, opt.MaxSec, opt.Count), nil
+	if stats.Skipped == stats.Scanned && stats.LastSkipErr != nil {
+		return nil, stats.LastSkipErr
+	}
+	return result, nil
+}
+
+func completeAndParse(ctx context.Context, llm completer, user string) ([]Suggestion, error) {
+	text, err := llm.complete(ctx, systemPrompt, user)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResponse(text)
+}
+
+// clock formats ms as h:mm:ss or m:ss.
+func clock(ms int64) string {
+	t := ms / 1000
+	if t >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", t/3600, t/60%60, t%60)
+	}
+	return fmt.Sprintf("%d:%02d", t/60, t%60)
 }
 
 func providerKeyHint(p string) string {

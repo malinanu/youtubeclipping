@@ -9,11 +9,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta"
+
+// geminiRetryUnit scales the backoff on 429/5xx: waits are 1x, 3x, 6x, 12x
+// (5s, 15s, 30s, 60s by default). Tests shrink it.
+var geminiRetryUnit = 5 * time.Second
+
+var geminiBackoff = []int{1, 3, 6, 12}
 
 // APIError is a non-2xx response from an HTTP LLM provider.
 type APIError struct {
@@ -46,7 +54,7 @@ func newGemini(opt Options) *geminiCompleter {
 		base = geminiBaseURL
 	}
 	return &geminiCompleter{key: opt.APIKey, model: opt.Model, base: strings.TrimRight(base, "/"),
-		http: &http.Client{Timeout: 8 * time.Minute}, retryWait: 3 * time.Second}
+		http: &http.Client{Timeout: 8 * time.Minute}, retryWait: geminiRetryUnit}
 }
 
 type gPart struct {
@@ -70,18 +78,29 @@ type gResponse struct {
 }
 
 func (g *geminiCompleter) complete(ctx context.Context, system, user string) (string, error) {
-	text, err := g.call(ctx, system, user, true)
+	text, err := g.completeModel(ctx, g.model, system, user)
+	// The chosen model stays overloaded after all retries: try the default
+	// (usually the lighter, higher-capacity) model once for this request.
+	var apierr *APIError
+	if errors.As(err, &apierr) && apierr.StatusCode == http.StatusServiceUnavailable && g.model != DefaultGeminiModel {
+		text, err = g.completeModel(ctx, DefaultGeminiModel, system, user)
+	}
+	return text, err
+}
+
+func (g *geminiCompleter) completeModel(ctx context.Context, model, system, user string) (string, error) {
+	text, err := g.call(ctx, model, system, user, true)
 	// Older/other models may reject the JSON-schema field; retry once relying on
 	// JSON mode + the format spelled out in the prompt.
 	var apierr *APIError
 	if errors.As(err, &apierr) && apierr.StatusCode == http.StatusBadRequest &&
 		strings.Contains(strings.ToLower(apierr.Body), "schema") {
-		text, err = g.call(ctx, system, user, false)
+		text, err = g.call(ctx, model, system, user, false)
 	}
 	return text, err
 }
 
-func (g *geminiCompleter) call(ctx context.Context, system, user string, withSchema bool) (string, error) {
+func (g *geminiCompleter) call(ctx context.Context, model, system, user string, withSchema bool) (string, error) {
 	cfg := map[string]any{
 		"responseMimeType": "application/json",
 		"temperature":      0.4,
@@ -95,15 +114,20 @@ func (g *geminiCompleter) call(ctx context.Context, system, user string, withSch
 		"contents":          []gContent{{Role: "user", Parts: []gPart{{Text: user + jsonFormatHint}}}},
 		"generationConfig":  cfg,
 	})
-	endpoint := fmt.Sprintf("%s/models/%s:generateContent", g.base, url.PathEscape(g.model))
+	endpoint := fmt.Sprintf("%s/models/%s:generateContent", g.base, url.PathEscape(model))
 
 	var lastErr error
-	for attempt := 0; attempt < 4; attempt++ {
+	var retryAfter time.Duration
+	for attempt := 0; attempt <= len(geminiBackoff); attempt++ {
 		if attempt > 0 {
+			wait := time.Duration(geminiBackoff[attempt-1]) * g.retryWait
+			if retryAfter > wait {
+				wait = min(retryAfter, 2*time.Minute)
+			}
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(time.Duration(attempt) * g.retryWait):
+			case <-time.After(wait):
 			}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
@@ -124,7 +148,15 @@ func (g *geminiCompleter) call(ctx context.Context, system, user string, withSch
 		resp.Body.Close()
 		if resp.StatusCode >= 300 {
 			lastErr = &APIError{Provider: "gemini", StatusCode: resp.StatusCode, Body: trunc(string(data), 600)}
+			if resp.StatusCode == http.StatusNotFound && strings.Contains(strings.ToLower(string(data)), "not found") {
+				lastErr = &APIError{Provider: "gemini", StatusCode: resp.StatusCode,
+					Body: fmt.Sprintf("model %q not found for this API key; choose a model in Settings → Gemini model", model)}
+			}
 			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+				retryAfter = 0
+				if sec, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After"))); err == nil && sec > 0 {
+					retryAfter = time.Duration(sec) * time.Second
+				}
 				continue
 			}
 			return "", lastErr
@@ -170,4 +202,60 @@ func trunc(s string, n int) string {
 		return s[:n] + "…"
 	}
 	return s
+}
+
+// ListGeminiModels returns the model IDs (without the "models/" prefix) that
+// support generateContent for this key, sorted. An empty base uses the public API.
+func ListGeminiModels(ctx context.Context, base, key string) ([]string, error) {
+	if base == "" {
+		base = geminiBaseURL
+	}
+	base = strings.TrimRight(base, "/")
+	client := &http.Client{Timeout: 20 * time.Second}
+	var out []string
+	token := ""
+	for page := 0; page < 20; page++ {
+		q := url.Values{"pageSize": {"1000"}}
+		if token != "" {
+			q.Set("pageToken", token)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/models?"+q.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("x-goog-api-key", key)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("gemini: %w", err)
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			return nil, &APIError{Provider: "gemini", StatusCode: resp.StatusCode, Body: trunc(string(data), 600)}
+		}
+		var r struct {
+			Models []struct {
+				Name    string   `json:"name"`
+				Methods []string `json:"supportedGenerationMethods"`
+			} `json:"models"`
+			Next string `json:"nextPageToken"`
+		}
+		if err := json.Unmarshal(data, &r); err != nil {
+			return nil, fmt.Errorf("gemini: list models: %w", err)
+		}
+		for _, m := range r.Models {
+			for _, meth := range m.Methods {
+				if meth == "generateContent" {
+					out = append(out, strings.TrimPrefix(m.Name, "models/"))
+					break
+				}
+			}
+		}
+		if r.Next == "" {
+			break
+		}
+		token = r.Next
+	}
+	sort.Strings(out)
+	return out, nil
 }
